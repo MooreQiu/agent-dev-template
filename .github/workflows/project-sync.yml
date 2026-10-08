@@ -1,0 +1,52 @@
+name: Project Sync
+
+# 把 labels/assignee/PR 状态单向同步到 Projects 看板（Agent Queue）。
+# 默认关闭：需 ① secret GH_PROJECT_TOKEN（含 project 权限的 PAT，GITHUB_TOKEN 写不了 Projects）
+#          ② var PROJECT_SYNC_ENABLED=true  ③ var AGENT_PROJECT_NUMBER=<项目编号>
+on:
+  issues:
+    types: [labeled, unlabeled, assigned, unassigned, closed, reopened]
+  pull_request:
+    types: [opened, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: ${{ vars.PROJECT_SYNC_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sync state to board
+        env:
+          GH_TOKEN: ${{ secrets.GH_PROJECT_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PNUM: ${{ vars.AGENT_PROJECT_NUMBER }}
+        run: |
+          [ -n "$PNUM" ] || { echo "缺少 var AGENT_PROJECT_NUMBER，跳过"; exit 0; }
+          set_status() {
+            gh project item-add "$PNUM" --owner "$OWNER" --url "$1" >/dev/null 2>&1 || true
+            gh project item-edit "$PNUM" --owner "$OWNER" --url "$1" --field Status --single-select-option "$2" >/dev/null 2>&1 \
+              || echo "  ⚠️ 状态更新失败: $1 → $2"
+          }
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            URL="${{ github.event.issue.html_url }}"
+            if [ "${{ github.event.issue.state }}" = "closed" ]; then
+              set_status "$URL" "Done"
+            elif [ "$(gh api "${{ github.event.issue.url }}" --jq '(.assignees | length) > 0 or ([.labels[].name] | index("agent-claimed") != null)')" = "true" ]; then
+              set_status "$URL" "In Progress"
+            elif [ "$(gh api "${{ github.event.issue.url }}" --jq '[.labels[].name] | index("ready-for-agent") != null')" = "true" ]; then
+              set_status "$URL" "Todo"
+            fi
+          else
+            BODY=$(gh api "${{ github.event.pull_request.url }}" --jq .body 2>/dev/null || echo "")
+            for N in $(echo "$BODY" | grep -oEi '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' | grep -oE '[0-9]+' | sort -u); do
+              URL="https://github.com/${GITHUB_REPOSITORY}/issues/$N"
+              if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+                set_status "$URL" "Done"
+              else
+                set_status "$URL" "In Progress"
+              fi
+            done
+          fi

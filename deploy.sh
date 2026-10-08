@@ -47,6 +47,8 @@ copy_item() {
   echo "  ✓ $item"
 }
 copy_item AGENTS.md
+copy_item docs
+copy_item scripts
 copy_item .specify
 copy_item .claude/commands
 copy_item .claude/skills

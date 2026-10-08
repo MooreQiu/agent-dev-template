@@ -46,11 +46,17 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | 模型分级 | workflow 运行时解析 | `trivial` 标签自动切 flash 快速模型 |
 | 一键配置 | `setup.sh` | labels、secrets、模型 vars、branch protection、auto-merge |
 | 一键部署 | `deploy.sh` | 部署进已有仓库（开 PR，不覆盖已有文件） |
+| 跨 harness | `scripts/agent.sh`、[docs/HARNESSES.md](docs/HARNESSES.md) | AGENTS.md 单一事实源，claude/codex/opencode/gemini 一键切换 |
+| Projects 看板 | `setup.sh --with-project`、`project-sync.yml` | 可选：labels → 看板单向同步 |
 
 ## 模型分级与换 provider
 
 - **trivial 分级**：issue 打 `trivial` 标签 → 自动用 flash 快速模型（约快一倍），适合文档/配置类小任务
 - **换 provider 只改 4 个值**：secrets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` + vars `AGENT_MODEL_DEFAULT`/`AGENT_MODEL_FLASH`，任何 Anthropic 兼容端点通用，对照表见 [INSTALL.md](INSTALL.md)
+
+## Projects 看板与里程碑（可选）
+
+`./setup.sh --with-project` 一键创建 "Agent Queue" 看板（Status：Queued / In Progress / In Review / Done）并回填当前队列。设计原则：**labels/assignee 是唯一事实源，看板只是视图**——CI 同步（project-sync.yml，默认关闭）用 `GH_PROJECT_TOKEN`（project 权限 PAT，GITHUB_TOKEN 写不了 Projects）单向把状态刷到看板；GITHUB 2026-03 起 Projects 已原生显示 agent session 活动。里程碑进度用 `/queue` 或看板 Milestone 分组查看；优先级用 `p0`–`p3` 标签。
 
 ## 认领语义（防重复干活）
 
