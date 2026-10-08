@@ -1,0 +1,9 @@
+{
+  "name": "agent-dev-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent-driven development template (see AGENTS.md)",
+  "scripts": {
+    "test": "bash tests/test_license.sh"
+  }
+}
