@@ -37,6 +37,7 @@ label ready-for-agent 1d76db "已就绪，agent 可认领（工作队列）"
 label agent-claimed 5319e7 "已被 agent-sweep 认领（锁）"
 label agent-failed d93f0b "agent 处理失败，已释放回队列"
 label blocked b60205 "有阻塞，勿认领"
+label trivial ededed "琐碎任务，自动用 flash 快速模型处理"
 
 if [ "$SKIP_SECRETS" = 0 ]; then
   say "写入 secrets（Claude Code Action 需要）"
@@ -56,6 +57,10 @@ if [ "$SKIP_SECRETS" = 0 ]; then
     fi
   fi
 fi
+
+say "写入模型变量（随时可用 gh variable set 更新，换 provider 只改这里）"
+gh variable set AGENT_MODEL_DEFAULT --repo "$REPO" -b "${AGENT_MODEL_DEFAULT:-glm-5.3[1m]}" >/dev/null 2>&1 && echo "  ✓ AGENT_MODEL_DEFAULT"
+gh variable set AGENT_MODEL_FLASH --repo "$REPO" -b "${AGENT_MODEL_FLASH:-glm-5.3-flash[1m]}" >/dev/null 2>&1 && echo "  ✓ AGENT_MODEL_FLASH"
 
 if [ "$SKIP_PROTECTION" = 0 ]; then
   say "保护 main 分支（要求 PR、禁止 force push）"

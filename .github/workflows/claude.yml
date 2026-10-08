@@ -26,9 +26,6 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3[1m]
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.3-flash[1m]
-      ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3[1m]
       API_TIMEOUT_MS: "3000000"
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     steps:
@@ -48,12 +45,28 @@ jobs:
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
+      - name: Resolve model (trivial label -> flash)
+        run: |
+          DEFAULT="${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}"
+          FLASH="${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}"
+          N="${{ github.event.issue.number }}"
+          CHOICE="$DEFAULT"
+          if [ -n "$N" ] && gh issue view "$N" --json labels --jq '[.labels[].name] | index("trivial") != null' 2>/dev/null | grep -q true; then
+            CHOICE="$FLASH"
+          fi
+          echo "模型选择: $CHOICE"
+          {
+            echo "ANTHROPIC_DEFAULT_SONNET_MODEL=$CHOICE"
+            echo "ANTHROPIC_DEFAULT_OPUS_MODEL=$CHOICE"
+            echo "ANTHROPIC_DEFAULT_HAIKU_MODEL=$FLASH"
+          } >> "$GITHUB_ENV"
+
       - name: Dispatch to Claude
         run: |
           ACTOR="${{ github.actor }}"
           if [ "${{ github.event_name }}" = "issue_comment" ]; then
             N="${{ github.event.issue.number }}"
-            # 运行时拉取评论与正文，避免把不可信内容内插进脚本
+            # 运行时拉取评论，避免把不可信内容内插进脚本
             COMMENT=$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${{ github.event.comment.id }}" --jq .body 2>/dev/null || echo "")
             if [ "$(gh api "repos/${GITHUB_REPOSITORY}/issues/$N" --jq '.pull_request != null')" = "true" ]; then
               gh pr checkout "$N"
