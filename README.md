@@ -41,7 +41,7 @@ ANTHROPIC_AUTH_TOKEN=<你的智谱key> ./setup.sh
 | Spec Kit | `.claude/skills/speckit-*` | specify→plan→tasks→implement 规格驱动 |
 | Issue 模板 | `.github/ISSUE_TEMPLATE/` | bug / feature / agent 任务（含验收标准） |
 | PR 模板 | `.github/PULL_REQUEST_TEMPLATE.md` | 摘要 + 关联 issue + 验证证据 |
-| 派发 | `.github/workflows/claude.yml` | @claude 提及 / 指派触发 Claude Code Action |
+| 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（免 GitHub App） |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
 | 本地命令 | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` |
 | 一键配置 | `setup.sh` | labels、secrets、branch protection、auto-merge |
@@ -63,5 +63,5 @@ Workflows 通过 repo secrets 走 GLM（`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_T
 
 ## 已知限制
 
-- branch protection / auto-merge 在 GitHub Free 私有仓库不可用（`setup.sh` 会提示），公开仓库或 Pro 可用
-- claude-code-action 走第三方 (base URL) 端点时，首次跑请确认 Actions 日志中模型调用正常
+- branch protection 在 GitHub Free 私有仓库不可用（`setup.sh` 会提示），公开仓库或 Pro 可用；auto-merge 已尽量启用
+- 派发与 sweep 均用 headless Claude Code CLI（不依赖 Claude GitHub App）；若将来改用 Anthropic 官方，可换回 anthropics/claude-code-action
