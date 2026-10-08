@@ -1,0 +1,7 @@
+{
+  "name": "agent-dev-template",
+  "private": true,
+  "scripts": {
+    "test:editorconfig": "bash tests/test-editorconfig.sh"
+  }
+}
