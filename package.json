@@ -4,6 +4,6 @@
   "private": true,
   "description": "Agent-driven development template (see AGENTS.md)",
   "scripts": {
-    "test": "bash tests/test_license.sh"
+    "test": "for t in tests/test*.sh; do echo \"== $t\"; bash \"$t\" || exit 1; done"
   }
 }
