@@ -24,9 +24,11 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 # 1. 用本模板建仓（或 gh repo create myproj --template MooreQiu/agent-dev-template）
 # 2. 一键配置（labels、secrets、branch protection、auto-merge）
 ANTHROPIC_AUTH_TOKEN=<你的智谱key> ./setup.sh
-# 3. 换掉 AGENTS.md 里的"项目信息"占位（构建/测试命令）
-# 4. 开一个 issue 用 "🤖 Agent 任务" 模板 → 自动带 ready-for-agent 标签
-# 5. 触发 agent，任选其一：
+# 3. 网页里开一个开关（API 改不了）：Settings → Actions → General → Workflow permissions
+#    勾选 Allow GitHub Actions to create and approve pull requests
+# 4. 换掉 AGENTS.md 里的"项目信息"占位（构建/测试命令）
+# 5. 开一个 issue 用 "🤖 Agent 任务" 模板 → 自动带 ready-for-agent 标签
+# 6. 触发 agent，任选其一：
 #    a) 在 issue 评论 @claude 干活
 #    b) 把 issue 指派给任何人（保持 ready-for-agent 标签）
 #    c) 什么都不做，等每晚 agent-sweep 自动认领（也可手动 Run workflow）
@@ -64,4 +66,5 @@ Workflows 通过 repo secrets 走 GLM（`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_T
 ## 已知限制
 
 - branch protection 在 GitHub Free 私有仓库不可用（`setup.sh` 会提示），公开仓库或 Pro 可用；auto-merge 已尽量启用
+- "Allow GitHub Actions to create and approve pull requests" 只能在网页设置里开启；未开启时 agent 会推好分支并附 compare 链接和现成的 PR 描述，人工点一下即可
 - 派发与 sweep 均用 headless Claude Code CLI（不依赖 Claude GitHub App）；若将来改用 Anthropic 官方，可换回 anthropics/claude-code-action

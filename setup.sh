@@ -85,4 +85,8 @@ EOF
 fi
 
 say "完成 ✅"
+echo "  ⚠️ 最后一步（只能网页操作，API 不可改）："
+echo "     Settings → Actions → General → Workflow permissions →"
+echo "     勾选「Allow GitHub Actions to create and approve pull requests」"
+echo "     （不开启时 agent 会推好分支并给出 compare 链接，人工一键开 PR）"
 echo "  试试：用「🤖 Agent 任务」模板开 issue（自动带 ready-for-agent）→ @claude 评论或指派触发；或等每晚 agent-sweep"
