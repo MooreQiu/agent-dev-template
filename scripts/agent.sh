@@ -28,7 +28,7 @@ case "$AGENT" in
     exec gemini --yolo -p "$PROMPT"
     ;;
   *)
-    echo "未知 harness: $AGENT（支持 claude / codex / opencode / gemini）" >&2
+    echo "未知 harness: ${AGENT}（支持 claude / codex / opencode / gemini）" >&2
     exit 1
     ;;
 esac

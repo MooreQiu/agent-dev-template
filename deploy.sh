@@ -35,7 +35,7 @@ git checkout -B chore/agent-dev-template "origin/$DEFAULT_BRANCH" 2>/dev/null ||
 
 say() { printf '\n==> %s\n' "$*"; }
 
-say "复制体系文件到 $REPO（已存在的一律跳过，不覆盖你的定制）"
+say "复制体系文件到 ${REPO}（已存在的一律跳过，不覆盖你的定制）"
 copy_item() {
   local item="$1"
   if [ -e "$item" ]; then
@@ -79,7 +79,7 @@ else
 fi
 
 if [ -n "$REPO" ] && [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  say "在线配置 $REPO（labels/secrets/vars）"
+  say "在线配置 ${REPO}（labels/secrets/vars）"
   ( cd "$DIR" && ./setup.sh --repo="$REPO" )
 else
   say "跳过在线配置"

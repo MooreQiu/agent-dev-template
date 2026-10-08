@@ -26,6 +26,8 @@
 | `agent-claimed` | agent-sweep 已认领（锁） |
 | `agent-failed` | agent 处理失败，已释放回队列 |
 | `blocked` | 有阻塞，勿认领 |
+| `trivial` | 碎任务，CI 自动切 flash 快速模型 |
+| `p0`–`p3` | 优先级，p0 最高（p0 阻塞其他一切） |
 
 ## 规格驱动（Spec Kit）
 

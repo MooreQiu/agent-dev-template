@@ -78,7 +78,7 @@ if [ "$WITH_PROJECT" = 1 ]; then
   say "创建 Projects v2 看板（Agent Queue，可选组件）"
   OWNER=$(gh api "repos/$REPO" --jq .owner.login)
   if PNUM=$(gh project create --title "Agent Queue" --owner "$OWNER" --format json --jq .number 2>/dev/null) && [ -n "$PNUM" ] && [ "$PNUM" != "null" ]; then
-    echo "  ✓ 项目 #$PNUM（新项目自带 Status 字段：Todo / In Progress / Done）"
+    echo "  ✓ 项目 #${PNUM}（新项目自带 Status 字段：Todo / In Progress / Done）"
     gh project link "$PNUM" --owner "$OWNER" --repo "$REPO" >/dev/null 2>&1 \
       && echo "  ✓ 已关联仓库（可在网页 ⋯ → Workflows 开启 Auto-add）"
     gh issue list --repo "$REPO" --label ready-for-agent --state open --json url --jq '.[].url' 2>/dev/null |
