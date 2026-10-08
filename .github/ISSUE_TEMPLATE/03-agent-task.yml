@@ -1,0 +1,39 @@
+name: "🤖 Agent 任务"
+description: 结构化任务，创建后直接进入 agent 认领队列
+labels: ["ready-for-agent"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 任务目标
+      description: 一句话说清要做成什么
+      placeholder: "例：给上传接口加重试，失败时指数退避最多 3 次"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景与上下文
+      description: 相关代码位置、文档、上游 issue
+      placeholder: "例：src/uploader/ 现有逻辑；上游需求见 #12"
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准（Definition of Done）
+      description: 全部勾选才算完成；优先写成可测试的条款
+      placeholder: |
+        - [ ] 新增单测覆盖失败重试路径
+        - [ ] `npm test -- uploader` 全绿
+        - [ ] 配置项写入 README
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 约束与范围外（out of scope）
+      placeholder: "例：不改下载逻辑；不引入新依赖"
+  - type: input
+    id: commands
+    attributes:
+      label: 相关命令（可选）
+      description: 复现/验证用的命令

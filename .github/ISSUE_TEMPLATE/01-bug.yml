@@ -1,0 +1,39 @@
+name: "🐞 Bug 报告"
+description: 报告一个可复现的缺陷
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象描述
+      description: 一句话说清哪里不对
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 进入 '...'
+        2. 执行 '...'
+        3. 看到 '...'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 vs 实际行为
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 环境（版本/OS/浏览器等）
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 修复完成的判定，尽量写成可勾选项
+      placeholder: |
+        - [ ] 复现步骤走一遍不再出现
+        - [ ] 新增回归测试覆盖该路径
