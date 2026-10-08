@@ -15,7 +15,7 @@
 2. **建分支**：`agent/issue-<n>`（人工任务可用 `feature/*`、`fix/*`），基于最新 main
 3. **TDD 不可协商**：先写失败测试 → 最小实现变绿 → 全绿下重构；把 issue 的验收标准逐条变成测试
 4. **提交**：commit message 英文祈使句；一个 issue 一个 PR；不做范围外改动，发现新问题就开新 issue
-5. **PR**：按模板填写（Closes #n、改动摘要、验证证据）；不自行合并
+5. **PR**：按模板填写（Closes #n、改动摘要、验证证据）；本地会话不自行合并——合并由独立审计工作流（pr-review.yml）判定：APPROVE 自动合并，REQUEST_CHANGES 退回队列
 6. **汇报**：完成后在 issue 评论 PR 链接与验证结果
 
 ## Label 语义

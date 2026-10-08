@@ -41,6 +41,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | Spec Kit | `.claude/skills/speckit-*` | specify→plan→tasks→implement 规格驱动 |
 | Issue/PR 模板 | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md` | 验收标准 checkbox 结构化 |
 | 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（免 GitHub App） |
+| 互审+自动合并 | `.github/workflows/pr-review.yml` | agent PR 独立审计（跑测试、贴 verdict），APPROVE 自动合并 |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
 | 本地命令 | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
 | 模型分级 | workflow 运行时解析 | `trivial` 标签自动切 flash 快速模型 |

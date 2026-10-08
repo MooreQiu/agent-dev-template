@@ -43,7 +43,7 @@ cd /tmp/adt
 gh label list                                  # 含 ready-for-agent、agent-claimed、agent-failed、blocked、trivial
 gh secret list -R <owner/name>                 # 含 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN
 gh variable list -R <owner/name>               # 含 AGENT_MODEL_DEFAULT、AGENT_MODEL_FLASH
-gh workflow list -R <owner/name>               # Claude Dispatch 与 Agent Sweep 均 active
+gh workflow list -R <owner/name>               # Claude Dispatch / Agent Sweep / PR Review 均 active
 ```
 
 **冒烟测试**（真实闭环）：
