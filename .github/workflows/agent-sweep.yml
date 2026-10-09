@@ -70,14 +70,12 @@ jobs:
           BASE="${{ github.event.repository.default_branch }}"
           DEFAULT="${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}"
           FLASH="${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}"
-          QUEUED=$(gh issue list --label ready-for-agent --state open --json number,title,labels,assignees \
-            | jq --argjson limit "$LIMIT" \
-              '[.[] | select((.assignees | length) == 0 and ([.labels[].name] | index("agent-claimed") | not) and ([.labels[].name] | index("blocked") | not))][:$limit]')
-          COUNT=$(echo "$QUEUED" | jq length)
-          echo "队列中待处理: $COUNT"
-          for i in $(seq 0 $((COUNT - 1))); do
-            N=$(echo "$QUEUED" | jq -r ".[$i].number")
-            [ -z "$N" ] || [ "$N" = "null" ] && continue
+          # 周期 sweep 是恢复路径（issue #17）：选单统一走依赖+优先级调度器
+          # （完整队列分页读取、p0 阻塞、依赖已合并才可选、已合并/在审不重选）。
+          QUEUED=$(scripts/agent-schedule.sh list --limit "$LIMIT")
+          COUNT=$(printf '%s\n' "$QUEUED" | grep -c .)
+          echo "可调度任务: $COUNT"
+          for N in $QUEUED; do
             echo "=== 认领 issue #$N ==="
             if [ "$(gh issue view "$N" --json labels --jq '[.labels[].name] | index("trivial") != null')" = "true" ]; then
               echo "trivial 任务，使用 flash 模型"
