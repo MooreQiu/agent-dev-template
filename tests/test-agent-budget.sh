@@ -108,6 +108,17 @@ cat > "$BAD_BUDGETS" <<'EOF'
 }
 EOF
 
+FRACTIONAL_BUDGETS="$WORK/budgets-fractional.json"
+cat > "$FRACTIONAL_BUDGETS" <<'EOF'
+{
+  "max_attempts_per_issue": 2.5,
+  "max_repair_rounds": 3,
+  "max_convergence_rounds": 2,
+  "max_elapsed_seconds_per_run": 10800,
+  "max_steps_per_run": 8
+}
+EOF
+
 # ===========================================================================
 # AC1: limits configuration
 # ===========================================================================
@@ -143,6 +154,10 @@ check "invalid budgets fail closed (limits errors)" \
   sh -c '! AGENT_BUDGET_FILE="$2" bash "$1" limits' sh "$BUDGET" "$BAD_BUDGETS"
 check "invalid budgets fail closed (check errors, never allows a run)" \
   sh -c '! AGENT_BUDGET_FILE="$3" bash "$1" check "$2"' sh "$BUDGET" 22 "$BAD_BUDGETS"
+check "fractional limits fail closed (limits errors, no silent truncation)" \
+  sh -c '! AGENT_BUDGET_FILE="$2" bash "$1" limits' sh "$BUDGET" "$FRACTIONAL_BUDGETS"
+check "fractional limits fail closed (check errors, never allows a run)" \
+  sh -c '! AGENT_BUDGET_FILE="$3" bash "$1" check "$2"' sh "$BUDGET" 22 "$FRACTIONAL_BUDGETS"
 
 # ===========================================================================
 # mocked gh + fixture repository
