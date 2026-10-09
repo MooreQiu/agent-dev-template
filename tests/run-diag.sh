@@ -83,8 +83,12 @@ case "$tracked" in
   1) exit 91 ;;
 esac
 git -C "$d/src" commit -qm "baseline" || exit 50
+inhead="$(git -C "$d/src" ls-tree -r HEAD --name-only | grep -c 'scripts/agent-')"
+[ "$inhead" -ge 2 ] || exit 95
 git -C "$d/src" remote add origin "$d/origin/origin.git" || exit 50
 git -C "$d/src" push -q origin HEAD:refs/heads/main || exit 50
+inbare="$(git -C "$d/origin/origin.git" ls-tree -r main --name-only | grep -c 'scripts/agent-')"
+[ "$inbare" -ge 2 ] || exit 97
 git clone -q "$d/origin/origin.git" "$d/runner" || exit 50
 [ -f "$d/runner/scripts/agent-task.sh" ] || exit 93
 [ -f "$d/runner/scripts/agent-claim.sh" ] || exit 94
