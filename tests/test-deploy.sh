@@ -80,6 +80,7 @@ REQUIRED='AGENTS.md CLAUDE.md INSTALL.md docs/HARNESSES.md scripts/agent.sh
 .claude/skills/speckit-plan/SKILL.md .github/ISSUE_TEMPLATE/config.yml
 .github/PULL_REQUEST_TEMPLATE.md .github/workflows/claude.yml
 .github/workflows/agent-sweep.yml .github/workflows/pr-review.yml
+.github/workflows/review-watchdog.yml
 .github/workflows/project-sync.yml setup.sh'
 
 for f in $REQUIRED; do
