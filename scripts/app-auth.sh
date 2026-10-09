@@ -28,18 +28,24 @@
 app_b64url() { base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='; }
 
 app_jwt_sign() { # <app_id> <key_file> -> JWT on stdout
-  local app_id=$1 key_file=$2 now header payload sig_raw sig
+  local app_id=$1 key_file=$2 now header payload sig_file sig
   now=$(date +%s)
   header=$(printf '{"alg":"RS256","typ":"JWT"}' | app_b64url)
   payload=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' \
     "$((now - 60))" "$((now + 300))" "$app_id" | app_b64url)
-  # capture openssl output before base64 so its exit status is not masked
-  # by the trailing tr in the pipeline (no pipefail when sourced by tests)
-  if ! sig_raw=$(printf '%s' "$header.$payload" |
-    openssl dgst -sha256 -sign "$key_file"); then
+  # sign to a file: RSA signatures are binary and contain NUL bytes, which
+  # shell variables cannot hold (bash drops them and corrupts the
+  # signature). openssl remains the last command of the pipeline, so its
+  # exit status is not masked by the trailing tr (no pipefail when sourced
+  # by tests)
+  sig_file=$(mktemp "${TMPDIR:-/tmp}/app-jwt-sig.XXXXXX")
+  if ! printf '%s' "$header.$payload" |
+    openssl dgst -sha256 -sign "$key_file" -out "$sig_file"; then
+    rm -f "$sig_file"
     return 1
   fi
-  sig=$(printf '%s' "$sig_raw" | app_b64url)
+  sig=$(app_b64url <"$sig_file")
+  rm -f "$sig_file"
   printf '%s.%s.%s' "$header" "$payload" "$sig"
 }
 

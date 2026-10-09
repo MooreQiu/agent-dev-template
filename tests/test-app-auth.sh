@@ -53,9 +53,13 @@ app_api() { # method path jwt -> body on stdout (test mock)
 
 # Runs app_auth_main in an isolated subshell. Args: app_id app_key env_file
 # github_token installation_id (empty string means "not set").
+# GITHUB_ACTIONS is neutralized so assertions hold identically on runners
+# (where it is ambient) and on laptops; set RUNNER_MODE=1 to simulate an
+# Actions runner for the add-mask assertions.
 run_auth() {
   (
-    unset GH_TOKEN APP_INSTALLATION_ID
+    unset GH_TOKEN APP_INSTALLATION_ID GITHUB_ACTIONS
+    if [ -n "${RUNNER_MODE:-}" ]; then export GITHUB_ACTIONS=true; fi
     APP_ID="$1" APP_PRIVATE_KEY="$2" GITHUB_ENV="$3"
     export APP_ID APP_PRIVATE_KEY GITHUB_ENV GITHUB_REPOSITORY
     if [ -n "${4:-}" ]; then export GITHUB_TOKEN="$4"; else unset GITHUB_TOKEN; fi
@@ -146,16 +150,28 @@ else
 fi
 
 # --- AC: credentials stay out of logs ---
+# OUT_A is captured with GITHUB_ACTIONS neutralized (run_auth pins it), so
+# no output channel may carry the token value, ::add-mask:: included.
 case "$OUT_A" in
   *ghs_mock_installation_token*)
     fail "token value never printed to stdout/stderr" "leaked in: $OUT_A" ;;
   *)
     pass "token value never printed to stdout/stderr" ;;
 esac
-OUT_MASK=$(GITHUB_ACTIONS=true run_auth 123456 "$KEY" "$TMP/env6" "" "" 2>&1)
+OUT_MASK=$(RUNNER_MODE=1 run_auth 123456 "$KEY" "$TMP/env6" "" "" 2>&1)
 case "$OUT_MASK" in
   *'::add-mask::'*) pass "token masked via add-mask on Actions runners" ;;
   *) fail "token masked via add-mask on Actions runners" "out=$OUT_MASK" ;;
+esac
+# the mask workflow command is the only sanctioned appearance of the token
+# on runners: strip those lines and nothing token-like may remain
+OUT_MASK_STRIPPED=$(printf '%s\n' "$OUT_MASK" | grep -v '^::add-mask::')
+case "$OUT_MASK_STRIPPED" in
+  *ghs_mock_installation_token*)
+    fail "on runners the token appears only in the add-mask command" \
+      "leaked in: $OUT_MASK_STRIPPED" ;;
+  *)
+    pass "on runners the token appears only in the add-mask command" ;;
 esac
 
 # --- AC: JWT is a real RS256 JWT ---
@@ -165,8 +181,8 @@ if [ "$RC_JWT" -eq 0 ]; then
   REST="${JWT#*.}"
   PAYLOAD_B64="${REST%%.*}"
   SIG_B64="${REST#*.}"
-  decode_b64url() {
-    node -e 'const a=process.argv[1];const b=a.replace(/-/g,"+").replace(/_/g,"/");process.stdout.write(Buffer.from(b,"base64").toString("utf8"))' "$1"
+  decode_b64url() { # write the raw decoded bytes (binary-safe, no utf8 pass)
+    node -e 'const a=process.argv[1];const b=a.replace(/-/g,"+").replace(/_/g,"/");process.stdout.write(Buffer.from(b,"base64"))' "$1"
   }
   HEADER=$(decode_b64url "$HEADER_B64")
   PAYLOAD=$(decode_b64url "$PAYLOAD_B64")
@@ -181,10 +197,24 @@ if [ "$RC_JWT" -eq 0 ]; then
   [ -n "$SIG_B64" ] \
     && pass "JWT carries an RSA signature" \
     || fail "JWT carries an RSA signature" "empty signature"
+  # RSA signatures are binary and contain NUL bytes, which shell variables
+  # cannot hold (bash drops them, corrupting the signature). Verify the
+  # signature cryptographically so the signing path stays binary-safe.
+  openssl pkey -in "$TMP/key.pem" -pubout -out "$TMP/jwt_pub.pem" 2>/dev/null
+  decode_b64url "$SIG_B64" >"$TMP/jwt_sig.bin"
+  if printf '%s' "${JWT%.*}" |
+    openssl dgst -sha256 -verify "$TMP/jwt_pub.pem" \
+      -signature "$TMP/jwt_sig.bin" >/dev/null 2>&1; then
+    pass "JWT signature verifies against the signing key (binary-safe)"
+  else
+    fail "JWT signature verifies against the signing key (binary-safe)" \
+      "signature corrupted between openssl and base64"
+  fi
 else
   fail "JWT header declares RS256" "app_jwt_sign rc=$RC_JWT"
   fail "JWT payload carries the App ID as iss" "app_jwt_sign rc=$RC_JWT"
   fail "JWT carries an RSA signature" "app_jwt_sign rc=$RC_JWT"
+  fail "JWT signature verifies against the signing key (binary-safe)" "app_jwt_sign rc=$RC_JWT"
 fi
 
 # --- AC: workflows use the auth layer consistently ---
