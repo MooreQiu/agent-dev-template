@@ -41,7 +41,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | Spec Kit | `.claude/skills/speckit-*` | specify→plan→tasks→implement 规格驱动 |
 | 角色预检 | `scripts/agent-preflight.sh`、`.agent/roles.json` | 三角色（specify/implement/review）必需文件/技能/工具校验，运行留痕（[docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)） |
 | Issue/PR 模板 | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md` | 验收标准 checkbox 结构化 |
-| 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（bot 触发一律过滤，防递归） |
+| 派发 | `.github/workflows/claude.yml` | @claude/@codex/@gemini/@opencode 评论 / 指派触发对应 harness（bot 触发一律过滤，防递归） |
 | 互审+自动合并 | `.github/workflows/pr-review.yml`、`scripts/review-verdict.sh` | 独立审计产出绑定 PR/head SHA/run 的结构化 verdict artifact（bot 评论仅展示），判决器复核门禁与 head 未变后 squash 合并；修改合并控制路径的 PR 需人工合并 |
 | CI 质量门禁 | `.github/workflows/ci.yml`、`scripts/ci-gate.sh` | 按 `.agent/project.json` 确定性跑 build/test/lint/typecheck＋TDD 红绿证据（不采信 agent 自述）；pr-review 合并前强制同一门禁 |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
@@ -68,6 +68,28 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 运行时会在日志与确认评论里报告 provider endpoint（不含任何密钥）、实际模型与请求的 effort 及其来源（override / 仓库配置 / 兜底）。**effort 供应商限制**：effort 经 Claude Code `--effort` 传递，官方 Anthropic 端点支持；第三方兼容端点（如智谱 GLM）可能不生效——此时报告标注 `provider-dependent (unknown)`，不承诺未生效的设置。
 
 **换 provider 只改 secrets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` + vars `AGENT_MODEL_DEFAULT`/`AGENT_MODEL_FLASH`**（可选 `AGENT_EFFORT_DEFAULT`），任何 Anthropic 兼容端点通用，对照表见 [INSTALL.md](INSTALL.md)。
+
+## 多 harness 派发（@claude / @codex / @gemini / @opencode）
+
+评论里 @ 一个编码 agent 即可让 CI 用对应 harness 处理该 issue/PR（issue #23）：
+
+- **mention 解析**：`@claude`、`@codex`、`@gemini`、`@opencode` 须是独立 mention（`@claude-code`、邮箱里的 `user@claude.com` 不算）；**一条评论只允许 mention 一个**——出现两个不同 agent 判为歧义，直接拒绝并回评；重复同一个不算歧义
+- **授权语义不变**：bot 评论（ack、自动指派）一律拒绝，`AGENT_ALLOWED_ACTORS` 允许名单照常生效；所有 harness 走同一套原子认领（`agent-claim.sh`）、`agent-task.sh` 管线与产物核验
+- **开关：repo var `AGENT_HARNESSES`**（逗号分隔，默认 `claude`）。只放行名单内的 mention，其余拒绝并回评开启方法；指派触发（无 mention）固定用名单第一个。开启 `@codex` 示例：
+  ```bash
+  gh variable set AGENT_HARNESSES -b "claude,codex"
+  ```
+  同时在 `.agent/project.json` 的 `integrations` 加入 `"codex"`（bootstrap 会安装钉版 CLI，与 `agent_tooling.codex_cli` 一致），并配好凭证 secret。**与官方 Codex 集成共存**：若已启用官方 `openai/codex-action`（它也监听 `@codex`），把 codex 留在 `AGENT_HARNESSES` 之外即可避免双派发
+- **凭证（secret，缺失即预检失败回评，永不打印值）**：claude → `ANTHROPIC_AUTH_TOKEN`（或 `ANTHROPIC_API_KEY`）；codex → `CODEX_API_KEY`（exec 专用）或 `OPENAI_API_KEY`；gemini → `GEMINI_API_KEY`（或 Vertex 的 `GOOGLE_APPLICATION_CREDENTIALS`）；opencode → `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`（自定义 provider 如 GLM 经仓库 opencode 配置提供）
+- **模型/effort 按解析器三层优先级**（`scripts/model-config.sh --harness`）：claude 用 `AGENT_MODEL_DEFAULT`/`AGENT_MODEL_FLASH` 档 + 别名；其余 harness 各有 var，不设 = CLI 默认模型：
+  | harness | 模型 var（不设 = CLI 默认） | effort 支持 |
+  |---|---|---|
+  | claude | `AGENT_MODEL_DEFAULT` / `AGENT_MODEL_FLASH`（别名 sonnet/opus/haiku） | `low/medium/high/xhigh/max`（`--effort`） |
+  | codex | `AGENT_MODEL_CODEX` | `low/medium/high`（`model_reasoning_effort`） |
+  | gemini | `AGENT_MODEL_GEMINI` | 不支持（评论写 `effort=` 会被拒绝） |
+  | opencode | `AGENT_MODEL_OPENCODE`（`provider/model` 形式） | 不支持 |
+  `model=sonnet` 等别名是 claude 专属，其他 harness 会拒绝并提示写具体模型名
+- **调用形式按各 CLI 受支持版本验证**（钉版见 `.agent/project.json`，详见 [docs/HARNESSES.md](docs/HARNESSES.md)）：codex `exec --ephemeral --sandbox workspace-write`；gemini `--approval-mode=yolo --skip-trust`（`--yolo` 已废弃）；opencode `run --auto`；角色上下文：所有 harness 都读 AGENTS.md（gemini 经 `.gemini/settings.json` 配置）
 
 ## Projects 看板与里程碑（可选）
 

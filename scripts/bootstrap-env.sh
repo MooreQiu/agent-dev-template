@@ -21,6 +21,26 @@ REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 PROJECT_FILE="$REPO_ROOT/.agent/project.json"
 PREFLIGHT="$SELF_DIR/agent-preflight.sh"
 
+# integration name -> npm package (binaries share the integration name).
+# Kept in sync with agent-preflight.sh pin keys and docs/HARNESSES.md.
+integration_package() { # integration_package <integration>
+  case "$1" in
+    claude) printf '@anthropic-ai/claude-code' ;;
+    codex) printf '@openai/codex' ;;
+    gemini) printf '@google/gemini-cli' ;;
+    opencode) printf 'opencode-ai' ;;
+  esac
+}
+
+integration_pin_key() { # integration_pin_key <integration>
+  case "$1" in
+    claude) printf 'claude_code' ;;
+    codex) printf 'codex_cli' ;;
+    gemini) printf 'gemini_cli' ;;
+    opencode) printf 'opencode_cli' ;;
+  esac
+}
+
 usage() {
   printf '%s\n' \
     "Usage: scripts/bootstrap-env.sh [--check]" \
@@ -78,7 +98,6 @@ rt_name="$(project_scalar "$runtime" name)"
 rt_version="$(project_scalar "$runtime" version)"
 rt_lockfile="$(project_scalar "$runtime" lockfile)"
 cfg_install="$(project_scalar "$commands" install)"
-pin="$(project_scalar "$tooling" claude_code)"
 
 # 2. runtime prerequisites
 if [ "$rt_name" = "node" ]; then
@@ -139,17 +158,18 @@ if [ "$CHECK" -eq 0 ]; then
 
   command -v npm >/dev/null 2>&1 \
     || die 1 "required tool npm not found in PATH (needed for agent tooling)"
-  printf 'installing pinned agent tooling: @anthropic-ai/claude-code@%s\n' "$pin"
-  npm install -g "@anthropic-ai/claude-code@$pin" \
-    || die 1 "failed to install pinned agent tooling @anthropic-ai/claude-code@$pin"
+  # Install the pinned CLI for every enabled integration (issue #23).
+  for i in $integrations; do
+    pkg="$(integration_package "$i")"
+    ipin="$(project_scalar "$tooling" "$(integration_pin_key "$i")")"
+    printf 'installing pinned agent tooling: %s@%s\n' "$pkg" "$ipin"
+    npm install -g "$pkg@$ipin" \
+      || die 1 "failed to install pinned agent tooling $pkg@$ipin"
+  done
 
   for i in $integrations; do
-    case "$i" in
-      claude)
-        command -v claude >/dev/null 2>&1 \
-          || die 1 "required integration 'claude' missing from PATH after bootstrap"
-        ;;
-    esac
+    command -v "$i" >/dev/null 2>&1 \
+      || die 1 "required integration '$i' missing from PATH after bootstrap"
   done
 fi
 
