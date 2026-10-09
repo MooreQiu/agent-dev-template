@@ -34,7 +34,6 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
-          persist-credentials: false # 合并等操作认证统一走 scripts/app-auth.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -42,15 +41,6 @@ jobs:
 
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
-
-      # GitHub App 短时效 installation token（issue #13）：评论/合并走 App 身份，
-      # 避免 GITHUB_TOKEN 事件触发审批门；未配置时回退 GITHUB_TOKEN
-      - name: Resolve auth (GitHub App installation token)
-        env:
-          APP_ID: ${{ secrets.APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
-          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
-        run: scripts/app-auth.sh
 
       - name: Configure git
         run: |
@@ -86,15 +76,4 @@ jobs:
           fi
 
       - name: Auto-merge if approved
-        run: |
-          N="${{ github.event.pull_request.number }}"
-          # verdict 可能来自 github-actions[bot]（回退模式）或 App bot（agent-dev[bot]）
-          VERDICT=$(gh pr view "$N" --json comments --jq '[.comments[] | select(.author.login | endswith("[bot]"))][-1].body' | head -1)
-          echo "最新审计结论: $VERDICT"
-          if echo "$VERDICT" | grep -q "VERDICT: APPROVE"; then
-            gh pr merge "$N" --merge --delete-branch 2>/dev/null || gh pr merge "$N" --merge --delete-branch
-            echo "✅ 审计通过，已合并"
-          else
-            echo "⛔ 审计未通过（$VERDICT），已标记等待处理"
-            gh pr edit "$N" --add-label agent-failed || true
-          fi
+        run: bash scripts/review-verdict.sh "${{ github.event.pull_request.number }}"
