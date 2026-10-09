@@ -1,0 +1,72 @@
+name: Review Watchdog
+
+# issue #56：pr-review 的独立审计是 LLM 会话，可能在贴出 verdict 之前就死亡
+# （workflow 文件解析错误会让 run 在任何 job 启动前失败，即 startup_failure；
+# 基础设施错误会在 reviewer 步骤中途杀掉运行）。run 变红但无人盯 run 列表，
+# PR 就静默搁浅（PR #38 曾因此搁置 ~1.5h）。本 watchdog 独立于 sweep 调度，
+# 扫描 open agent/* PR 的最新 pr-review run：no_run / stuck / run_failed /
+# repair_stalled 四类静默失败发一条可执行的告警评论（限频、按 PR+模式去重）；
+# 对从未触发过 review 的 PR 至多做一次限频的 close+reopen 重触发——修改了
+# 审计/合并控制路径的 PR 永不重触发，由人工处理。检测与限频逻辑在
+# scripts/review-watchdog.sh（有验收测试）；本工作流不触碰合并判决路径。
+on:
+  schedule:
+    - cron: "11 21 * * *" # 北京时间 05:11，错开 sweep（19:37 UTC）的修复与认领窗口
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: review-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 告警去重只信任 reviewer bot 身份的标记评论（scripts/reviewer-identity.sh）
+      AGENT_REVIEWER_BOT_LOGIN: ${{ vars.AGENT_REVIEWER_BOT_LOGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Single source of truth: the runtime pin comes from .agent/project.json
+      # so the provisioned node always matches what scripts/bootstrap-env.sh
+      # enforces -- bumping the pin never leaves a stale literal behind.
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node_pin.outputs.version }}
+
+      # bootstrap 校验模型认证仅要求 env 存在（watchdog 本身不调用模型）
+      - name: Bootstrap environment (pinned tooling, fail-fast checks)
+        run: bash scripts/bootstrap-env.sh
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+
+      # GitHub App 短时效 installation token（issue #13）：评论走 App 身份，
+      # 告警去重/限频的标记评论因此可按 allowlist 归因；未配置时回退 GITHUB_TOKEN
+      - name: Resolve auth (GitHub App installation token)
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
+        run: scripts/app-auth.sh
+
+      - name: Scan open agent PRs for silent review failures (issue #56)
+        run: bash scripts/review-watchdog.sh scan
