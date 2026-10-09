@@ -263,9 +263,11 @@ if [ -f "$WF" ]; then
 
   ARTIFACT_PATHS="$TMP/artifact-paths.txt"
   artifact_path_entries "$WF" > "$ARTIFACT_PATHS"
-  check "workflow uploads the spec, plan and tasks artifacts" \
-    sh -c 'grep -q "spec\.md" "$1" && grep -q "plan\.md" "$1" && grep -q "tasks\.md" "$1"' \
+  check "workflow uploads the plan and tasks artifacts with a binding manifest" \
+    sh -c 'grep -q "manifest\.json" "$1" && grep -q "plan\.md" "$1" && grep -q "tasks\.md" "$1"' \
     sh "$ARTIFACT_PATHS"
+  check "bundles never carry the approved spec itself (git is its store)" \
+    sh -c '! grep -q "spec\.md" "$1"' sh "$ARTIFACT_PATHS"
   check "artifact upload paths contain no .. segment" \
     sh -c '! grep -q "\.\." "$1"' sh "$ARTIFACT_PATHS"
   check "artifact paths derive the feature dir from the spec path" \
