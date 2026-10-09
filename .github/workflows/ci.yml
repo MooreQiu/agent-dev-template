@@ -1,0 +1,50 @@
+name: CI Gate
+
+# Deterministic quality gate, independent of agent-generated review text: it
+# reads the build/test/lint/typecheck commands from .agent/project.json,
+# records a machine-verifiable evidence artifact, and enforces test-first
+# (red -> green) evidence for code changes -- prose claims are never accepted.
+#
+# STABLE CHECK NAMES -- do not rename without a migration note:
+#   status check context: "CI Gate / quality-gate"
+# setup.sh registers it as a required status check when branch protection is
+# available; when it is not, scripts/review-verdict.sh enforces the same gate
+# (via scripts/ci-gate.sh check) before any merge.
+#
+# Note: this workflow does not run scripts/bootstrap-env.sh because the gate
+# needs no model authentication; ci-gate.sh runs the configured install
+# command itself.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: test-first evidence walks the PR commits
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Quality gate (configured build/test/lint/typecheck + test-first evidence)
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$BASE" ]; then
+            bash scripts/ci-gate.sh run --base "$BASE"
+          else
+            bash scripts/ci-gate.sh run
+          fi

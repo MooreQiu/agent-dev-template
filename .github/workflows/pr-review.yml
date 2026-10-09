@@ -47,6 +47,17 @@ jobs:
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
+      # Deterministic quality gate on the merge ref, independent of the review
+      # text below: fails (and blocks the auto-merge step) on nonzero command
+      # exits or missing test-first evidence. The merge decider re-verifies the
+      # same evidence before merging, so branch protection is not required.
+      - name: CI quality gate (independent of review text)
+        run: |
+          EVIDENCE="$RUNNER_TEMP/ci-gate-evidence"
+          bash scripts/ci-gate.sh run --evidence-dir "$EVIDENCE" \
+            --base "${{ github.event.pull_request.base.sha }}"
+          echo "CI_GATE_EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+
       - name: Independent peer review
         run: |
           N="${{ github.event.pull_request.number }}"
