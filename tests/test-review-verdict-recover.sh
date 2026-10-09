@@ -55,6 +55,7 @@ echo "mock gh: unhandled arguments: $*" >&2
 exit 1
 EOF
 chmod +x "$MOCK_BIN/gh"
+export GH_LOG
 
 failures=0
 check() { # check <description> <command> [args...]
@@ -226,7 +227,7 @@ comments_fixture "$FX" \
   102 "$BOT" "$T0" "$TMP/body-approve.txt"
 
 OUT_FILE="$TMP/recovered.md"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX"
 check "recovers the single in-window verdict comment (exit 0)" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "prints the recovered verdict on stdout" sh -c '[ "$1" = "APPROVE" ]' sh "$OUT"
 check "writes the comment body verbatim to --out" cmp -s "$TMP/body-approve.txt" "$OUT_FILE"
@@ -235,7 +236,7 @@ check "writes the comment body verbatim to --out" cmp -s "$TMP/body-approve.txt"
 FX_R="$TMP/comments-reject.json"
 printf 'VERDICT: REQUEST_CHANGES — blocking issues listed below\n' > "$TMP/body-reject.txt"
 comments_fixture "$FX_R" 103 "$BOT" "2026-10-10T12:05:00Z" "$TMP/body-reject.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_R"
 check "recovers a REQUEST_CHANGES verdict comment" \
   sh -c '[ "$1" = 0 ] && [ "$2" = "REQUEST_CHANGES" ]' sh "$STATUS" "$OUT"
 
@@ -243,7 +244,7 @@ check "recovers a REQUEST_CHANGES verdict comment" \
 FX_H="$TMP/comments-heading.json"
 printf '## Independent audit — VERDICT: APPROVE\n\nverified by executing the suite.\n' > "$TMP/body-heading.txt"
 comments_fixture "$FX_H" 104 "$BOT" "2026-10-10T12:05:00Z" "$TMP/body-heading.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_H"
 check "recovers the issue #62 heading shape from a comment" \
   sh -c '[ "$1" = 0 ] && [ "$2" = "APPROVE" ]' sh "$STATUS" "$OUT"
 
@@ -252,20 +253,20 @@ FX_FORGED="$TMP/comments-forged.json"
 comments_fixture "$FX_FORGED" \
   105 "$OTHER" "2026-10-10T12:05:00Z" "$TMP/body-approve.txt" \
   106 "other-app[bot]" "2026-10-10T12:05:00Z" "$TMP/body-approve.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_FORGED"
 check "a verdict comment by an unknown author is not recoverable" sh -c '[ "$1" = 1 ]' sh "$STATUS"
 check "unrecoverable runs write no body to --out" test ! -s "$OUT_FILE"
 
 # Comments older than the window are stale-run noise.
 FX_STALE="$TMP/comments-stale.json"
 comments_fixture "$FX_STALE" 107 "$BOT" "2026-10-10T11:59:59Z" "$TMP/body-approve.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_STALE"
 check "a verdict comment from before the window is not recoverable" sh -c '[ "$1" = 1 ]' sh "$STATUS"
 
 # Boundary: a comment created exactly at the window start counts.
 FX_EDGE="$TMP/comments-edge.json"
 comments_fixture "$FX_EDGE" 108 "$BOT" "$T0" "$TMP/body-approve.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_EDGE"
 check "a comment created exactly at the window start counts" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 
 # In-window noise without verdicts recovers nothing.
@@ -275,7 +276,7 @@ comments_fixture "$FX_NOISY" \
   109 "$BOT" "2026-10-10T12:00:10Z" "$TMP/ack.txt" \
   110 "$BOT" "2026-10-10T12:03:00Z" "$TMP/reports/noverdict.md" \
   111 "$BOT" "2026-10-10T12:04:00Z" "$TMP/reports/decoys.md"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_NOISY"
 check "ack comments and verdict-less/decoy comments recover nothing" sh -c '[ "$1" = 1 ]' sh "$STATUS"
 
 # Ambiguity fails closed: two usable verdict comments, even agreeing ones.
@@ -283,7 +284,7 @@ FX_AMBIG="$TMP/comments-ambiguous.json"
 comments_fixture "$FX_AMBIG" \
   112 "$BOT" "2026-10-10T12:01:00Z" "$TMP/body-approve.txt" \
   113 "$BOT" "2026-10-10T12:02:00Z" "$TMP/body-approve.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_AMBIG"
 check "two usable verdict comments in the window fail closed" sh -c '[ "$1" = 3 ]' sh "$STATUS"
 check "ambiguous windows write no body to --out" test ! -s "$OUT_FILE"
 
@@ -292,7 +293,7 @@ FX_MIXED="$TMP/comments-mixed.json"
 comments_fixture "$FX_MIXED" \
   114 "$BOT" "2026-10-10T12:01:00Z" "$TMP/reports/conflict.md" \
   115 "$BOT" "2026-10-10T12:02:00Z" "$TMP/body-approve.txt"
-do_recover "$NOW" "$OUT_FILE"
+do_recover "$NOW" "$OUT_FILE" COMMENTS_FIXTURE="$FX_MIXED"
 check "a conflicted verdict comment is not a second usable verdict" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 
 # Unusable fetches fail closed.
