@@ -18,6 +18,8 @@
 5. **PR**：按模板填写（Closes #n、改动摘要、验证证据）；本地会话不自行合并——合并由独立审计工作流（pr-review.yml）判定：APPROVE 自动合并，REQUEST_CHANGES 退回队列
 6. **汇报**：完成后在 issue 评论 PR 链接与验证结果
 
+**角色预检**：动工前按角色跑 `bash scripts/agent-preflight.sh verify <specify|implement|review>`（须在仓库根目录；缺文件/技能/工具/目录即报错并留运行记录）。角色 → 指令/产物/技能/工具映射见 `.agent/roles.json` 与 [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)；阶段技能必须显式调用（Claude `/speckit-*`、Codex `$speckit-*`），调用后用 `note-invocation` 留痕，改动技能后跑 `scripts/sync-skills.sh` 同步 Codex 副本。
+
 ## Label 语义
 
 | Label | 含义 |
