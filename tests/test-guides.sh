@@ -36,6 +36,14 @@ contains() { # contains <file> <extended regex>
     grep -Eq -- "$2" "$1"
 }
 
+contains_all() { # contains_all <file> <regex>... -- every regex must match
+    file=$1
+    shift
+    for re in "$@"; do
+        grep -Eq -- "$re" "$file" || return 1
+    done
+}
+
 INSTALL=INSTALL.md
 OPS=docs/OPERATIONS.md
 CONTROL=docs/RUN_CONTROL.md
@@ -61,7 +69,7 @@ fi
 # AC2: operations guide -- queue semantics, dependencies, claims, verdicts.
 if [ -f "$OPS" ]; then
     check "operations guide separates milestone from queue eligibility" \
-        contains "$OPS" 'ready-for-agent' && contains "$OPS" '[Mm]ilestone'
+        contains_all "$OPS" 'ready-for-agent' '[Mm]ilestone'
     check "operations guide documents p0 blocking semantics" \
         contains "$OPS" 'p0'
     check "operations guide documents the Dependencies convention" \
@@ -69,14 +77,13 @@ if [ -f "$OPS" ]; then
     check "operations guide requires merged PRs to unlock dependents" \
         contains "$OPS" '[Mm]erged'
     check "operations guide documents claim ownership and leases" \
-        contains "$OPS" 'agent-claims' && contains "$OPS" 'lease'
+        contains_all "$OPS" 'agent-claims' 'lease'
     check "operations guide documents the sweep schedule" \
         contains "$OPS" '19:37'
     check "operations guide documents both verdicts" \
-        contains "$OPS" 'VERDICT: APPROVE' && \
-        contains "$OPS" 'VERDICT: REQUEST_CHANGES'
+        contains_all "$OPS" 'VERDICT: APPROVE' 'VERDICT: REQUEST_CHANGES'
     check "operations guide separates CI gate from review verdict" \
-        contains "$OPS" 'ci-gate' && contains "$OPS" '[Vv]erdict artifact'
+        contains_all "$OPS" 'ci-gate' '[Vv]erdict artifact'
     check "operations guide flags control-path PRs for manual merge" \
         contains "$OPS" 'review-verdict'
 fi
@@ -85,19 +92,19 @@ fi
 # stale claims, partial work.
 if [ -f "$CONTROL" ]; then
     check "run control guide documents pause and cancel labels" \
-        contains "$CONTROL" 'agent-paused' && contains "$CONTROL" 'agent-cancelled'
+        contains_all "$CONTROL" 'agent-paused' 'agent-cancelled'
     check "run control guide documents budget exhaustion" \
-        contains "$CONTROL" 'budgets\.json' && contains "$CONTROL" 'budget_exhausted'
+        contains_all "$CONTROL" 'budgets\.json' 'budget_exhausted'
     check "run control guide marks exhausted budgets blocked" \
         contains "$CONTROL" 'blocked'
     check "run control guide documents rejected PR recovery" \
-        contains "$CONTROL" 'pr-repair' && contains "$CONTROL" 'agent-failed'
+        contains_all "$CONTROL" 'pr-repair' 'agent-failed'
     check "run control guide documents stale claim reconciliation" \
-        contains "$CONTROL" 'reconcile' && contains "$CONTROL" 'lease'
+        contains_all "$CONTROL" 'reconcile' 'lease'
     check "run control guide documents the manual claim release" \
         contains "$CONTROL" -- '--remove-label agent-claimed'
     check "run control guide documents retained partial work" \
-        contains "$CONTROL" 'budget_stop' && contains "$CONTROL" 'prepare'
+        contains_all "$CONTROL" 'budget_stop' 'prepare'
 fi
 
 # AC4: upgrade guide -- upgrade, conflicts, rollback/removal,
@@ -114,13 +121,11 @@ if [ -f "$UPGRADE" ]; then
     check "upgrade guide documents rollback" \
         contains "$UPGRADE" '[Rr]ollback|revert'
     check "upgrade guide documents removal commands" \
-        contains "$UPGRADE" 'gh workflow disable' && \
-        contains "$UPGRADE" 'gh secret remove'
+        contains_all "$UPGRADE" 'gh workflow disable' 'gh secret remove'
     check "upgrade guide names retained user customization" \
         contains "$UPGRADE" 'project\.json'
     check "upgrade guide documents secret rotation" \
-        contains "$UPGRADE" 'ANTHROPIC_AUTH_TOKEN' && \
-        contains "$UPGRADE" '[Rr]otation|轮换'
+        contains_all "$UPGRADE" 'ANTHROPIC_AUTH_TOKEN' '[Rr]otation|轮换'
 fi
 
 # AC5: cross-links and link validation across all five documents.
