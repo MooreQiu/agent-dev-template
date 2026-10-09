@@ -36,10 +36,19 @@ MOCK_BIN="$TMP/bin"
 mkdir -p "$MOCK_BIN"
 
 # --- mocked gh (records every call; serves live PR state from a fixture) ----
+# Review bodies are snapshotted at call time: the script deletes its temp
+# body file right after posting, so the log path alone is not readable.
 cat > "$MOCK_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
 echo "gh $*" >> "$GH_LOG"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body-file" ] && [ -n "${REVIEW_BODY_CAPTURE:-}" ]; then
+    cp "$a" "$REVIEW_BODY_CAPTURE" 2>/dev/null
+  fi
+  prev="$a"
+done
 for a in "$@"; do
   case "$a" in
     repos/*/pulls/[0-9]*)
@@ -60,6 +69,8 @@ exit 1
 EOF
 chmod +x "$MOCK_BIN/gh"
 export GH_LOG
+REVIEW_BODY_CAPTURE="$TMP/review-body.txt"
+export REVIEW_BODY_CAPTURE
 
 failures=0
 check() { # check <description> <command> [args...]
@@ -529,15 +540,12 @@ do_status "$TMP/pr-head-a.json" "$ART" "$EV" yes
 check "exit 0 surfacing an APPROVE verdict" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "APPROVE is posted as a native approving review" \
   sh -c 'grep -q "pr review 42 --approve" "$1"' sh "$GH_LOG"
-review_body() { # review_body <flag> -- body file path of the recorded review call
-  sed -n "s/^gh pr review 42 $1 --body-file //p" "$GH_LOG" | sed -n 1p
-}
 check "review body embeds the full distilled report" \
   sh -c 'grep -Fq "VERDICT: APPROVE" "$1" && grep -Fq "diff matches the PR description" "$1"' \
-  sh "$(review_body --approve)"
+  sh "$REVIEW_BODY_CAPTURE"
 check "review body cites the artifact provenance (run, head SHA)" \
-  sh -c 'grep -Fq "$2" "$1" && grep -Fq "$3" "$1"' \
-  sh "$(review_body --approve)" "$RUN_ID" "$HEAD_A"
+  sh -c 'grep -Fq "$1" "$2" && grep -Fq "$3" "$2"' \
+  sh "$RUN_ID" "$REVIEW_BODY_CAPTURE" "$HEAD_A"
 check "APPROVE surfacing does not merge the PR (display-only)" sh -c '! merged'
 check "APPROVE surfacing does not relabel the PR" sh -c '! labeled'
 
@@ -549,7 +557,7 @@ check "REQUEST_CHANGES is posted as a native changes-requested review" \
   sh -c 'grep -q "pr review 42 --request-changes" "$1"' sh "$GH_LOG"
 check "rejection review body embeds the report" \
   sh -c 'grep -Fq "tests do not cover head binding" "$1"' \
-  sh "$(review_body --request-changes)"
+  sh "$REVIEW_BODY_CAPTURE"
 
 # --- status mode: artifact mismatch -> no review status change ----------------
 
