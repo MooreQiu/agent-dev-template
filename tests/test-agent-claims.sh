@@ -286,6 +286,46 @@ check "reconcile leaves a live claim alone" test -n "$(claim_ref_value rec 43)"
 check "reconcile performs no gh mutations for a live claim" \
   sh -c '! grep -Eq "issue (edit|comment)" "$1"' sh "$GH_LOG"
 
+# ===========================================================================
+# AC1 (PR-comment path): workflows must release with an explicit owner
+# ===========================================================================
+echo "== workflow release calls carry the owner"
+
+CLAUDE_YML="$REPO_ROOT/.github/workflows/claude.yml"
+check "PR-comment acquire passes the run owner" \
+  sh -c 'grep -Fq "agent-claim.sh acquire \"pr-\$N\" --owner \"\$AGENT_OWNER\"" "$1"' sh "$CLAUDE_YML"
+check "PR-comment release passes the run owner" \
+  sh -c 'grep -Fq "agent-claim.sh release \"pr-\$N\" --owner \"\$AGENT_OWNER\"" "$1"' sh "$CLAUDE_YML"
+check "cancellation release passes the run owner" \
+  grep -Fq 'agent-claim.sh release "$N" --owner "$AGENT_OWNER"' "$CLAUDE_YML"
+check "cancellation PR release passes the run owner" \
+  grep -Fq 'agent-claim.sh release "pr-$N" --owner "$AGENT_OWNER"' "$CLAUDE_YML"
+
+# The exact sequence claude.yml performs must leave no claim behind.
+seed_ownercheck() {
+  d="$WORK/owner-$1"
+  mkdir -p "$d"
+  git init -q --bare "$d/origin.git"
+  git -C "$d/origin.git" symbolic-ref HEAD refs/heads/main
+  git init -q "$d/seed"
+  printf 'oc %s\n' "$1" > "$d/seed/README"
+  git -C "$d/seed" add -A
+  git -C "$d/seed" commit -qm baseline
+  git -C "$d/seed" remote add origin "$d/origin.git"
+  git -C "$d/seed" push -q origin HEAD:refs/heads/main
+  git clone -q "$d/origin.git" "$d/runner"
+  git -C "$d/runner" config user.name r
+  git -C "$d/runner" config user.email r@example.com
+}
+seed_ownercheck pr
+( cd "$WORK/owner-pr/runner" \
+  && bash "$SCRIPT" acquire pr-7 --owner claude-dispatch-run-1 ) >/dev/null 2>&1
+check "PR-comment style acquire succeeds" test -n "$(git ls-remote "$WORK/owner-pr/origin.git" refs/agent-claims/pr-7 | sed -n 1p)"
+( cd "$WORK/owner-pr/runner" \
+  && bash "$SCRIPT" release pr-7 --owner claude-dispatch-run-1 --reason "pr-comment rc=0" ) >/dev/null 2>&1
+check "PR-comment style release deletes the claim ref" \
+  test -z "$(git ls-remote "$WORK/owner-pr/origin.git" refs/agent-claims/pr-7 | sed -n 1p)"
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures test(s) failed"

@@ -75,7 +75,7 @@ jobs:
             COMMENT=$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${{ github.event.comment.id }}" --jq .body 2>/dev/null || echo "")
             if [ "$(gh api "repos/${GITHUB_REPOSITORY}/issues/$N" --jq '.pull_request != null')" = "true" ]; then
               # PR 评论：同一认领协议（key = pr-<N>），序列化对同一 PR 的并发请求
-              if ! bash scripts/agent-claim.sh acquire "pr-$N"; then
+              if ! bash scripts/agent-claim.sh acquire "pr-$N" --owner "$AGENT_OWNER"; then
                 gh pr comment "$N" --body "🤖 该 PR 已有正在进行的 @claude 任务（认领被持有），请稍后再试。" || true
                 exit 0
               fi
@@ -88,7 +88,7 @@ jobs:
                 --permission-mode acceptEdits \
                 --allowedTools "Bash(gh:*)" "Bash(git:*)" "Bash(npm:*)" \
                 --max-turns 50 || rc=$?
-              bash scripts/agent-claim.sh release "pr-$N" --reason "pr-comment rc=$rc"
+              bash scripts/agent-claim.sh release "pr-$N" --owner "$AGENT_OWNER" --reason "pr-comment rc=$rc" || true
               exit "$rc"
             else
               gh issue comment "$N" --body "🤖 @claude 收到，开始处理 issue #$N。" || true
@@ -129,7 +129,7 @@ jobs:
           N="${{ github.event.issue.number }}"
           if [ "${{ github.event_name }}" = "issue_comment" ] \
             && [ "$(gh api "repos/${GITHUB_REPOSITORY}/issues/$N" --jq '.pull_request != null' 2>/dev/null)" = "true" ]; then
-            bash scripts/agent-claim.sh release "pr-$N" || true
+            bash scripts/agent-claim.sh release "pr-$N" --owner "$AGENT_OWNER" || true
           else
-            bash scripts/agent-claim.sh release "$N" || true
+            bash scripts/agent-claim.sh release "$N" --owner "$AGENT_OWNER" || true
           fi

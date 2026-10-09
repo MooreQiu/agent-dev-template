@@ -178,7 +178,8 @@ Closes #$KEY" >/dev/null 2>&1; then
       VPR="$(printf '%s' "$PR_JSON" | sed -n 's/.*"number":\([0-9][0-9]*\).*/\1/p' | sed -n 1p)"
       # 3. The PR must link the issue so merging closes the loop.
       if ! printf '%s' "$PR_JSON" | grep -Eq "(Closes|Fixes|Resolves) #$KEY"; then
-        gh pr edit "$VPR" --body "$(printf '%s' "$PR_JSON" | sed -n 's/.*"body": *"\(.*\)".*/\1/p')
+        PR_BODY="$(gh pr view "$VBRANCH" --json body --jq .body 2>/dev/null || true)"
+        gh pr edit "$VPR" --body "$PR_BODY
 
 Closes #$KEY" >/dev/null 2>&1 || true
         PR_JSON="$(gh pr view "$VBRANCH" --json number,body,state,url 2>/dev/null || true)"
@@ -318,10 +319,11 @@ cmd_run() {
   # 4. Verify artifacts and persist the outcome.
   if do_verify "$WT" "$TARGET" "$BRANCH" "$HARNESS_RC"; then
     # 5. Keep the succeeded claim (reconcile cleans it once the issue
-    #    closes); record the outcome in the shared registry.
+    #    closes); record the outcome in the shared registry. VPR is set
+    #    by do_verify for this very run -- no guessing from old files.
     bash "$CLAIM" update "$KEY" --owner "$OWNER" \
       --field status=succeeded --field "branch=$BRANCH" \
-      --field "pr=$(sed -n 's/.*"pr":\([0-9][0-9]*\).*/\1/p' "$ROOT/.agent/runs"/task-"$KEY"-*.json 2>/dev/null | tail -1)" \
+      --field "pr=${VPR:-0}" \
       >/dev/null 2>&1 || true
     exit 0
   fi

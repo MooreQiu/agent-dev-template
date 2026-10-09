@@ -74,7 +74,14 @@ case "$cmd" in
     ;;
   "pr view")
     if [ -f "$GH_STATE/pr/$3.json" ]; then
-      cat "$GH_STATE/pr/$3.json"
+      f="$GH_STATE/pr/$3.json"
+      # Honor --jq .body the way the real gh does (plain text, no JSON).
+      for a in "$@"; do
+        [ "$a" = ".body" ] || continue
+        sed -n 's/^.*"body": *"\([^"]*\)".*$/\1/p' "$f"
+        exit 0
+      done
+      cat "$f"
       exit 0
     fi
     echo "no pull request found for $3" >&2
@@ -106,7 +113,27 @@ case "$cmd" in
     echo "https://fixture/pr/$n"
     exit 0
     ;;
-  "pr edit"|"issue edit"|"issue comment")
+  "pr edit")
+    all="$*"
+    n=""
+    body=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --body) body="$2" ;;
+        [0-9]*) [ -z "$n" ] && n="$1" ;;
+      esac
+      shift
+    done
+    printf '%s\n' "$all" >> "$GH_STATE/pr-edit-$n.args"
+    for f in "$GH_STATE"/pr/*.json "$GH_STATE"/pr/*/*.json; do
+      [ -f "$f" ] || continue
+      grep -Fq "\"number\":$n," "$f" || continue
+      head="$(sed -n 's/^\(.*"body":\).*/\1/p' "$f")"
+      printf '%s "%s"}\n' "$head" "$body" > "$f"
+    done
+    exit 0
+    ;;
+  "issue edit"|"issue comment")
     exit 0
     ;;
 esac
@@ -334,6 +361,33 @@ task badtest 63 -- bash -c 'printf x > X.md; git add X.md; git commit -qm c' \
   > "$WORK/badtest/run.out" 2>&1
 check "red validation suite fails the run despite a PR" test $? -ne 0
 check "validation failure requeues the task" test -z "$(claim_sha badtest 63)"
+
+# ===========================================================================
+# AC2/AC6: cancellation
+# ===========================================================================
+# ===========================================================================
+# AC4 (review finding): a PR whose body lacks the issue link gets it
+# appended without swallowing the rest of the JSON payload
+# ===========================================================================
+echo "== run: PR link repair"
+
+make_fixture linkfix
+issue_json 64
+mkdir -p "$GH_STATE/pr/agent"
+# Real gh emits --json fields sorted alphabetically: body comes first, so
+# a greedy extraction used to eat number/state/url into the new body.
+printf '{"body":"implementation notes without a link","number":6,"state":"OPEN","url":"https://fixture/pr/6"}\n' \
+  > "$GH_STATE/pr/agent/issue-64.json"
+task linkfix 64 -- bash -c 'printf y > Y.md; git add Y.md; git commit -qm c' \
+  > "$WORK/linkfix/run.out" 2>&1
+check "run with an unlinked PR succeeds after repair" test $? -eq 0
+check "link repair edits the PR body" test -f "$GH_STATE/pr-edit-6.args"
+check "repaired body keeps original text" \
+  sh -c 'grep -Fq "implementation notes without a link" "$1"' sh "$GH_STATE/pr-edit-6.args"
+check "repaired body links the issue" \
+  sh -c 'grep -Fq "Closes #64" "$1"' sh "$GH_STATE/pr-edit-6.args"
+check "repaired body does not swallow JSON fields" \
+  sh -c '! grep -Fq "\"number\"" "$1"' sh "$GH_STATE/pr-edit-6.args"
 
 # ===========================================================================
 # AC2/AC6: cancellation
