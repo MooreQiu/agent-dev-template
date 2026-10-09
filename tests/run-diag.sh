@@ -89,7 +89,14 @@ git -C "$d/runner" config user.email runner@example.com
 rc=$?
 echo "DIAG prepare rc=$rc" >&2
 sed -n '1,10p' "$WORK/prep/prepare.out" >&2
-[ "$rc" -eq 0 ] || exit 51
+[ "$rc" -eq 0 ] || {
+  grep -Fq 'cannot fetch' "$WORK/prep/prepare.out" && exit 60
+  grep -Fq 'cannot create worktree' "$WORK/prep/prepare.out" && exit 61
+  grep -Fq 'cannot attach worktree' "$WORK/prep/prepare.out" && exit 62
+  grep -Fq 'not inside a git repository' "$WORK/prep/prepare.out" && exit 63
+  grep -Fq 'ERROR' "$WORK/prep/prepare.out" && exit 64
+  exit 65
+}
 grep -Fq 'ERROR' "$WORK/prep/prepare.out" && exit 52
 [ -d "$d/runner/.agent-work/issue-50" ] || exit 53
 cd "$REPO_ROOT"
