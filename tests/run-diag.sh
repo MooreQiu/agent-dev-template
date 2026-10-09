@@ -8,6 +8,7 @@
 #   240      task test crashed without a FAIL line
 #   1..99    task test: index of first failing check
 set -u
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 W="$(mktemp -d "${TMPDIR:-/tmp}/diag-prep.XXXXXX")"
 
 mkdir -p "$W/origin" "$W/src/scripts" "$W/src/tests" "$W/src/.agent"
@@ -39,7 +40,7 @@ cd "$W/runner" || exit 23
 git fetch --quiet --prune origin || exit 10
 git worktree list --porcelain >/dev/null 2>&1 || exit 11
 git worktree add -b agent/issue-50 "$W/runner/.agent-work/issue-50" origin/main >/dev/null 2>&1 || exit 12
-cd "$(dirname "$0")/.." || exit 23
+cd "$REPO_ROOT" || exit 23
 rm -rf "$W"
 
 # Prepare chain is green on this runner: locate the failing check.
