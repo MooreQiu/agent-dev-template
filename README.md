@@ -68,7 +68,7 @@ Supported:
 
 - GitHub.com repositories (public, or private with the noted limitations), `gh` CLI, GitHub Actions runners.
 - The headless Claude Code CLI as the default worker harness, against any Anthropic-compatible endpoint (switch providers by changing two secrets and two variables); CI dispatch can be extended to the codex / gemini / opencode CLIs with the `AGENT_HARNESSES` variable ([docs/HARNESSES.md](docs/HARNESSES.md)).
-- Spec-driven development via Spec Kit (`specify -> plan -> tasks -> implement`), plus the spec pipeline: [docs/SPEC_START.md](docs/SPEC_START.md), [docs/SPEC_CONVERGE.md](docs/SPEC_CONVERGE.md), [docs/SPEC_TRACK.md](docs/SPEC_TRACK.md).
+- Spec-driven development via Spec Kit (`specify -> plan -> tasks -> implement`), plus the spec pipeline: [docs/SPEC_START.md](docs/SPEC_START.md), [docs/SPEC_CONVERGE.md](docs/SPEC_CONVERGE.md), [docs/SPEC_TRACK.md](docs/SPEC_TRACK.md), with automatic stage transitions between them ([docs/SPEC_ADVANCE.md](docs/SPEC_ADVANCE.md)).
 - Role preflight and pinned, reproducible environments ([docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)).
 - Running the same workflow locally under other harnesses (claude/codex/opencode/gemini) via `scripts/agent.sh` ([docs/HARNESSES.md](docs/HARNESSES.md)).
 
@@ -185,6 +185,7 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 - `/queue` -- one-screen overview of queue, in-progress, PRs, failed-retry, milestones (`.claude/commands/queue.md`).
 - `/milestone-plan`, `/claim`, `/tdd` -- the local workflow commands (`.claude/commands/`).
 - `scripts/spec-track.sh` -- read-only single-feature status from approved spec to verified completion ([docs/SPEC_TRACK.md](docs/SPEC_TRACK.md)).
+- `scripts/spec-advance.sh` -- automatic stage transitions for approved features: after issue generation, on a drained queue, and after convergence ([docs/SPEC_ADVANCE.md](docs/SPEC_ADVANCE.md)).
 - Optional Projects board via `./setup.sh --with-project`; labels and assignees remain the single source of truth, the board is a view ([docs/SPEC_TRACK.md](docs/SPEC_TRACK.md) for tracking, [INSTALL.md](INSTALL.md) for the board).
 - Role preflight and run records: [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).
 - Day-two run control -- pause/resume/cancel, budget exhaustion, rejected-PR repair, stale claims, retained partial work -- is documented in [docs/RUN_CONTROL.md](docs/RUN_CONTROL.md).

@@ -207,7 +207,7 @@ reset_state
 printf 'closed\n' > "$MS_STATE"
 run_sa on-drained
 check "on-drained with no eligible features dispatches nothing" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 # ============================================================================
 echo "== AC1/AC3: after-start advances to scheduling via an authenticated handoff =="
@@ -216,7 +216,7 @@ reset_state
 run_sa after-start "specs/$FEATURE/spec.md" "$R1" --json
 check "after-start succeeds" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "after-start dispatches the scheduler workflow" \
-  sh -c 'grep -Fq "workflow-run agent-scheduler.yml" "$1"' sh "$DISPATCH_LOG"
+  sh -c 'grep -Fq "run agent-scheduler.yml" "$1"' sh "$DISPATCH_LOG"
 check "the scheduler dispatch carries no convergence inputs" \
   sh -c '! grep -q "spec-converge" "$1"' sh "$DISPATCH_LOG"
 check "the dispatch is authenticated with the workflow token" \
@@ -235,7 +235,7 @@ run_sa after-start "specs/018-noapp/spec.md" "$R1"
 check "after-start rejects a missing approval record" \
   sh -c '[ "$1" = 1 ] && grep -qi "approval" "$2"' sh "$STATUS" "$OUT_ERR"
 check "a rejected gate dispatches nothing" \
-  sh -c '[ "$(cat "$1")" = 0 ]' sh "$DISPATCH_LOG"
+  sh -c '[ ! -s "$1" ]' sh "$DISPATCH_LOG"
 
 reset_state
 printf '1\n' > "$DISPATCH_RC"
@@ -251,7 +251,7 @@ echo "== AC2: after-converge routes remediation back to the scheduler =="
 reset_state
 run_sa after-converge "specs/$FEATURE/spec.md" "$R1" --verify-status ok --json
 check "remediation-scheduled (no completion record) returns to the scheduler" \
-  sh -c '[ "$1" = 0 ] && grep -Fq "workflow-run agent-scheduler.yml" "$2"' \
+  sh -c '[ "$1" = 0 ] && grep -Fq "run agent-scheduler.yml" "$2"' \
   sh "$STATUS" "$DISPATCH_LOG"
 check "the remediation handoff records next=scheduling" \
   sh -c 'grep -Fq "\"decision\":\"dispatch\"" "$1" && grep -Fq "\"next\":\"scheduling\"" "$1"' \
@@ -263,7 +263,7 @@ printf '{\n  "status": "complete",\n  "acceptance": "pass"\n}\n' \
   > "$FX/specs/$FEATURE/convergence/complete.json"
 run_sa after-converge "specs/$FEATURE/spec.md" "$R1" --verify-status ok --json
 check "verified completion dispatches nothing" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 check "completion records the terminal decision with evidence" \
   sh -c 'grep -Fq "\"decision\":\"complete\"" "$1" && grep -Fq "convergence/complete.json" "$1"' \
   sh "$OUT_FILE"
@@ -272,7 +272,7 @@ rm -rf "$FX/specs/$FEATURE/convergence"
 reset_state
 run_sa after-converge "specs/$FEATURE/spec.md" "$R1" --verify-status blocked --json
 check "blocked convergence starts no downstream run" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 check "blocked is reported as a resumable waiting-on-human state" \
   sh -c 'grep -Fq "\"decision\":\"blocked\"" "$1" && grep -Fq "\"next\":\"human-decision\"" "$1"' \
   sh "$OUT_FILE"
@@ -285,7 +285,7 @@ echo "== AC2: on-drained invokes convergence with the project budget =="
 reset_state
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "a drained feature dispatches the convergence workflow" \
-  sh -c '[ "$1" = 0 ] && grep -Fq "workflow-run spec-converge.yml" "$2"' \
+  sh -c '[ "$1" = 0 ] && grep -Fq "run spec-converge.yml" "$2"' \
   sh "$STATUS" "$DISPATCH_LOG"
 check "the convergence dispatch binds the approved spec and revision" \
   sh -c "grep -Fq -- '-f spec=specs/$FEATURE/spec.md' \"\$1\" && grep -Fq -- '-f revision=$R1' \"\$1\"" \
@@ -299,7 +299,7 @@ check "the drained transition publishes a stage summary" \
 reset_state
 run_sa on-drained "specs/$FEATURE/spec.md" --json
 check "json output is a single line" \
-  sh -c '[ "$(wc -l < "$1")" = 1 ]' sh "$OUT_FILE"
+  sh -c '[ "$(wc -l < "$1" | tr -d " ")" = 1 ]' sh "$OUT_FILE"
 check "json carries feature, revision, and evidence fields" \
   sh -c "grep -Fq '\"feature\":\"$FEATURE\"' \"\$1\" && grep -Fq '\"revision\":\"$R1\"' \"\$1\" && grep -Fq '\"dispatched\":\"spec-converge.yml\"' \"\$1\" && grep -Fq '\"next\":\"convergence\"' \"\$1\"" \
   sh "$OUT_FILE"
@@ -311,19 +311,19 @@ reset_state
 printf 'spec-converge specs/%s/spec.md @ %s\tin_progress\n' "$FEATURE" "$R1" > "$RUNS_TSV"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "an in-flight convergence run key suppresses the duplicate dispatch" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 reset_state
 printf 'spec-converge specs/%s/spec.md @ %s\tqueued\n' "$FEATURE" "$R1" > "$RUNS_TSV"
 run_sa on-drained "specs/$FEATURE/spec.md" --json
 check "a queued convergence run key suppresses duplicates too" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ] && grep -Fq "\"decision\":\"skip\"" "$3"' \
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ] && grep -Fq "\"decision\":\"skip\"" "$3"' \
   sh "$STATUS" "$DISPATCH_LOG" "$OUT_FILE"
 
 reset_state
 printf 'closed\n' > "$MS_STATE"
 run_sa on-drained "specs/$FEATURE/spec.md" --json
 check "a closed (complete) feature milestone is terminal, never re-converged" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 # ============================================================================
 echo "== AC2/AC5: undrained, paused, cancelled, and budget-bounded transitions =="
@@ -332,13 +332,13 @@ reset_state
 printf '12\t[%s/T003] late task\t\n' "$FEATURE" > "$OPEN_TSV"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "an undrained queue does not invoke convergence" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 reset_state
 printf '15\tblocked report\tblocked,agent-paused\n' > "$LABELS_TSV"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "a paused blocker holds the convergence transition" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 check "the paused hold names the human control in the summary" \
   sh -c 'grep -qi "agent-paused" "$1"' sh "$SUMMARY_FILE"
 
@@ -346,24 +346,24 @@ reset_state
 printf '15\tblocked report\tblocked,agent-cancelled\n' > "$LABELS_TSV"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "a cancelled blocker holds the convergence transition" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 reset_state
 printf '{"max_convergence_rounds": "zero"}\n' > "$BUDGET_FILE"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "an invalid project budget fails the transition closed" \
-  sh -c '[ "$1" = 1 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 1 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 reset_state
 run_sa on-drained "specs/$FEATURE_B/spec.md"
 check "a feature without planning artifacts is skipped, not dispatched" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 
 reset_state
 printf 'edited\n' >> "$FX/specs/$FEATURE/spec.md"
 run_sa on-drained "specs/$FEATURE/spec.md"
 check "a stale approval is never silently re-converged" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ ! -s "$2" ]' sh "$STATUS" "$DISPATCH_LOG"
 check "the stale skip points at re-approval" \
   sh -c 'grep -qi "stale" "$1"' sh "$SUMMARY_FILE"
 git -C "$FX" checkout -- "specs/$FEATURE/spec.md"
@@ -374,11 +374,11 @@ echo "== discovery: one sweep advances every eligible feature exactly once =="
 reset_state
 run_sa on-drained
 check "the sweep dispatches exactly one convergence run" \
-  sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = 1 ]' sh "$STATUS" "$DISPATCH_LOG"
+  sh -c '[ "$1" = 0 ] && [ "$(wc -l < "$2" | tr -d " ")" = 1 ]' sh "$STATUS" "$DISPATCH_LOG"
 check "the swept dispatch targets the drained feature" \
   sh -c "grep -Fq -- '-f spec=specs/$FEATURE/spec.md' \"\$1\"" sh "$DISPATCH_LOG"
 check "the unplaned feature is reported, not dispatched" \
-  sh -c "grep -q '$FEATURE_B' \"\$1\"" sh "$OUT_ERR"
+  sh -c "grep -q '$FEATURE_B' \"\$1\"" sh "$OUT_FILE"
 
 # ============================================================================
 echo "== wiring: workflows, docs =="
