@@ -39,7 +39,7 @@ jobs:
       ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}
       ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}
       API_TIMEOUT_MS: "3000000"
-      CLAUDE_CODE_DISABLE_NONSSENTIAL_TRAFFIC: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     steps:
       # Trusted control plane: the revision being merged INTO. Every gate,
       # verdict and merge decision below runs from this checkout (issue #19).
