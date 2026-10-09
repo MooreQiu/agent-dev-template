@@ -39,6 +39,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | Agent 规范 | `AGENTS.md` | 所有 harness 通读的工作流与红线（跨工具中立） |
 | 项目宪法 | `.specify/memory/constitution.md` | TDD/小步交付/安全约束，优先级最高 |
 | Spec Kit | `.claude/skills/speckit-*` | specify→plan→tasks→implement 规格驱动 |
+| 角色预检 | `scripts/agent-preflight.sh`、`.agent/roles.json` | 三角色（specify/implement/review）必需文件/技能/工具校验，运行留痕（[docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)） |
 | Issue/PR 模板 | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md` | 验收标准 checkbox 结构化 |
 | 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（bot 触发一律过滤，防递归） |
 | 互审+自动合并 | `.github/workflows/pr-review.yml` | agent PR 独立审计（跑测试、贴 verdict），APPROVE 自动合并 |
