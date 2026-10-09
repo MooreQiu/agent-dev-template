@@ -210,11 +210,45 @@ if [ "$RC_JWT" -eq 0 ]; then
     fail "JWT signature verifies against the signing key (binary-safe)" \
       "signature corrupted between openssl and base64"
   fi
+  # Bash command substitution silently strips NUL bytes, and ~65% of
+  # RSA-2048/SHA-256 signatures contain one, so a broken signing path still
+  # passes whenever the single sampled signature happens to be NUL-free.
+  # Iterate fresh signatures (payload varied via the app id, since the same
+  # payload within the same second would repeat the same signature) until
+  # one containing a NUL byte has verified, proving the binary path.
+  sig_has_nul() { # <file> -> 0 when the file contains a 0x00 byte
+    node -e 'process.exit(require("fs").readFileSync(process.argv[1]).includes(0)?0:1)' "$1"
+  }
+  nul_sig_verified=0
+  bad_sig=""
+  i=0
+  while [ "$i" -lt 25 ] && [ -z "$bad_sig" ] && [ "$nul_sig_verified" -eq 0 ]; do
+    i=$((i + 1))
+    JWT_N=$(app_jwt_sign "$((910000 + i))" "$TMP/key.pem") \
+      || { bad_sig="app_jwt_sign rc!=0 at iteration $i"; break; }
+    decode_b64url "${JWT_N##*.}" >"$TMP/jwt_sig.bin"
+    if printf '%s' "${JWT_N%.*}" |
+      openssl dgst -sha256 -verify "$TMP/jwt_pub.pem" \
+        -signature "$TMP/jwt_sig.bin" >/dev/null 2>&1; then
+      if sig_has_nul "$TMP/jwt_sig.bin"; then nul_sig_verified=$i; fi
+    else
+      bad_sig="iteration $i: signature does not verify (NUL bytes stripped?)"
+    fi
+  done
+  if [ -n "$bad_sig" ]; then
+    fail "a NUL-containing JWT signature verifies cryptographically" "$bad_sig"
+  elif [ "$nul_sig_verified" -gt 0 ]; then
+    pass "a NUL-containing JWT signature verifies cryptographically"
+  else
+    fail "a NUL-containing JWT signature verifies cryptographically" \
+      "no NUL-containing signature sampled in $i iterations"
+  fi
 else
   fail "JWT header declares RS256" "app_jwt_sign rc=$RC_JWT"
   fail "JWT payload carries the App ID as iss" "app_jwt_sign rc=$RC_JWT"
   fail "JWT carries an RSA signature" "app_jwt_sign rc=$RC_JWT"
   fail "JWT signature verifies against the signing key (binary-safe)" "app_jwt_sign rc=$RC_JWT"
+  fail "a NUL-containing JWT signature verifies cryptographically" "app_jwt_sign rc=$RC_JWT"
 fi
 
 # --- AC: workflows use the auth layer consistently ---
