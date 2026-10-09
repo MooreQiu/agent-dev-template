@@ -8,9 +8,11 @@
 # performed the review, and a digest of the CI gate evidence. The merge
 # decider ("merge") re-validates all of that against live PR state right
 # before merging. PR comments -- including the reviewer bots' (issue #13:
-# github-actions[bot] / mooreqiu-agent-dev-bot[bot], whichever identity
-# scripts/app-auth.sh resolved) -- are display-only and never authorize a
-# merge.
+# github-actions[bot] / the AGENT_REVIEWER_BOT_LOGIN repo variable,
+# whichever identity scripts/app-auth.sh resolved; the deployment's login
+# resolves via scripts/reviewer-identity.sh, failing closed to
+# github-actions[bot] alone when unset or malformed) -- are display-only
+# and never authorize a merge.
 #
 # Artifact (JSON, schema 1): schema, pr, verdict, head_sha, run_id,
 # run_attempt, created_at, report, evidence{dir, gate_digest}.
