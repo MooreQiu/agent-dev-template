@@ -25,6 +25,9 @@
 #   - duplicate events pick the same task; the claim protocol dedupes
 #     the second dispatch (AC3, AC6)
 #   - workflows wire selection through the scheduler (AC3, AC4)
+#   - an empty scheduler list keeps the sweep step green under the
+#     bash -e wiring semantics (drained or p0-held queue is a clean
+#     no-op, not a step failure)
 #
 # Run: bash tests/test-agent-schedule.sh
 set -u
@@ -439,6 +442,33 @@ check "periodic sweep selects through the scheduler" \
 SWEEP_RAW_SEL='QUEUED=$(gh issue list'
 check "periodic sweep no longer selects from the default issue page" \
   sh -c '! grep -Fq "$2" "$1"' sh "$SWEEP_YML" "$SWEEP_RAW_SEL"
+
+# Behavioral wiring check: an empty scheduler result must keep the sweep
+# step green. GitHub Actions runs `run:` bodies with bash -e, so any
+# command in the selection preamble that exits non-zero on the empty
+# state (e.g. `grep -c .` finding zero lines) aborts the whole step.
+# Extract the preamble (between `run: |` and the task loop), neutralize
+# ${{ }} templates, and execute it against a stubbed scheduler.
+SWEEP_SIM="$WORK/sweep-sim"
+SWEEP_STEP="$WORK/sweep-step.sh"
+awk '
+  /^      - name: Claim and execute queue$/ { step = 1; next }
+  step && /^        run: \|/ { inrun = 1; next }
+  inrun && /^ +for N in / { exit }
+  inrun { print substr($0, 11) }
+' "$SWEEP_YML" | sed -E 's/\$\{\{[^}]*\}\}/STUB/g' > "$SWEEP_STEP"
+check "sweep selection preamble extracted from the workflow" \
+  grep -Fq 'QUEUED=$(scripts/agent-schedule.sh list' "$SWEEP_STEP"
+mkdir -p "$SWEEP_SIM/scripts"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SWEEP_SIM/scripts/agent-schedule.sh"
+chmod +x "$SWEEP_SIM/scripts/agent-schedule.sh"
+( cd "$SWEEP_SIM" && exec bash -e "$SWEEP_STEP" ) >/dev/null 2>&1
+check "empty scheduler list keeps the sweep step green (bash -e)" \
+  test $? -eq 0
+printf '#!/usr/bin/env bash\nprintf "101\\n102\\n"\n' > "$SWEEP_SIM/scripts/agent-schedule.sh"
+OUT="$( cd "$SWEEP_SIM" && exec bash -e "$SWEEP_STEP" 2>/dev/null )"; RC=$?
+check "non-empty scheduler list still counts the batch" \
+  test "$RC" -eq 0 -a "$(printf '%s\n' "$OUT" | grep -Fc '可调度任务: 2')" -eq 1
 
 echo
 if [ "$failures" -gt 0 ]; then
