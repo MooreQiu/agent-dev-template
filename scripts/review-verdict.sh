@@ -63,6 +63,9 @@ if [ "$PRINT_ONLY" -eq 1 ]; then
 fi
 
 if printf '%s\n' "$BODY" | grep -q '^VERDICT: APPROVE'; then
+  # Merge controller: enforce the same gate as CI when branch protection is
+  # unavailable (CI_GATE_EVIDENCE is exported by the pr-review gate step).
+  [ -z "${CI_GATE_EVIDENCE:-}" ] || bash "$(dirname "$0")/ci-gate.sh" check --evidence-dir "$CI_GATE_EVIDENCE" || { echo "::error::CI quality gate evidence rejected for PR #$PR; not merging" >&2; exit 6; }
   if ! gh pr merge "$PR" --merge --delete-branch 2>/dev/null; then
     gh pr merge "$PR" --merge --delete-branch ||
       { echo "::error::merge of PR #$PR failed" >&2; exit 5; }

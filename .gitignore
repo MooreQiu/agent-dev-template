@@ -11,3 +11,5 @@ __pycache__/
 coverage/
 *.log
 .claude/settings.local.json
+.agent/runs/
+.ci-evidence/

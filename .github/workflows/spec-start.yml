@@ -1,0 +1,94 @@
+name: Spec Start
+
+# Autonomous planning and issue generation from a human-approved spec (issue
+# #16). Human-triggered: a reviewer supplies the approved spec path and the
+# immutable revision they approved. The workflow never edits the approved
+# spec; planning happens inside the approved constraints (docs/SPEC_START.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Path of the approved spec, e.g. specs/016-demo/spec.md"
+        required: true
+      revision:
+        description: "Immutable commit SHA of the approval"
+        required: true
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: spec-start-${{ github.event.inputs.spec }}
+  cancel-in-progress: false
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SPEC: ${{ github.event.inputs.spec }}
+      REVISION: ${{ github.event.inputs.revision }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      API_TIMEOUT_MS: "3000000"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the approved revision must resolve
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Configure git
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+      - name: Preflight the specification role
+        run: bash scripts/agent-preflight.sh verify specify
+
+      - name: Validate the approved spec
+        run: |
+          set +e
+          bash scripts/spec-start.sh "$SPEC" "$REVISION" --dry-run
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            3) echo "PLANNING_REQUIRED=1" >> "$GITHUB_ENV" ;;
+            *) exit "$rc" ;;
+          esac
+          # upload-artifact (@actions/glob) rejects path patterns containing
+          # "." or ".." segments, so derive the feature directory up front.
+          echo "FEATURE_DIR=$(dirname "$SPEC")" >> "$GITHUB_ENV"
+
+      # Generate plan.md/tasks.md when missing (validate them when present).
+      # Planning proceeds autonomously within the approved constraints; a
+      # genuinely unresolved requirement stops the run as BLOCKED instead of
+      # asking routine questions in CI. See docs/SPEC_START.md.
+      - name: Plan from the approved spec
+        if: env.PLANNING_REQUIRED == '1'
+        run: |
+          AGENT=claude scripts/agent.sh "Plan the feature whose approved spec is $SPEC at revision $REVISION, working in its feature directory. If plan.md or tasks.md is missing, author it by explicitly invoking the /speckit-plan and /speckit-tasks skills against the approved spec; when both already exist, only validate them. Follow the decision policy in docs/SPEC_START.md: proceed autonomously within the approved constraints and record decisions in plan.md; never modify spec.md or approval.json; if a requirement is genuinely unresolved, stop and report BLOCKED with the reason. After invoking each skill, record it with: bash scripts/agent-preflight.sh note-invocation specify <skill>"
+
+      - name: Generate issues from the approved tasks
+        run: bash scripts/spec-start.sh "$SPEC" "$REVISION" --json
+
+      - name: Upload planning artifacts
+        if: env.PLANNING_REQUIRED == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: planning-${{ github.event.inputs.revision }}
+          path: |
+            ${{ env.FEATURE_DIR }}/spec.md
+            ${{ env.FEATURE_DIR }}/plan.md
+            ${{ env.FEATURE_DIR }}/tasks.md
+          if-no-files-found: error

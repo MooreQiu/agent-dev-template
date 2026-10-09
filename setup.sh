@@ -102,7 +102,7 @@ if [ "$SKIP_PROTECTION" = 0 ]; then
   if gh api -X PUT "repos/$REPO/branches/${DEFAULT_BRANCH}/protection" --input - <<'EOF' >/dev/null 2>&1
 {
   "required_pull_request_reviews": { "dismiss_stale_reviews": false, "require_code_owner_reviews": false },
-  "required_status_checks": { "strict": true, "contexts": [] },
+  "required_status_checks": { "strict": true, "contexts": ["CI Gate / quality-gate"] },
   "enforce_admins": false,
   "restrictions": null,
   "allow_force_pushes": false,
