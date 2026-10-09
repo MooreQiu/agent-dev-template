@@ -79,6 +79,15 @@ const fs = require("fs");
 const env = process.env;
 const err = (code, msg) => { console.error("model-config: " + msg); process.exit(code); };
 
+// Reject messages are echoed into a markdown code fence in a workflow
+// comment: never repeat a raw untrusted token there. Strip backticks
+// (fence breakers) and control characters, and truncate, so attacker
+// text cannot escape the fence or flood the comment.
+const sanitize = (s) => {
+  const t = String(s).replace(/[`\x00-\x1f\x7f]/g, "").slice(0, 40).trim();
+  return t || "(filtered)";
+};
+
 const FALLBACK_MODEL = "glm-5.3[1m]";
 const FALLBACK_FLASH = "glm-5.3-flash[1m]";
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -96,7 +105,7 @@ const flash = flashModel || FALLBACK_FLASH;
 // Repository effort config must be valid if present.
 const repoEffort = (env.AGENT_EFFORT_DEFAULT || "").trim();
 if (repoEffort && !EFFORTS.includes(repoEffort)) {
-  err(3, "invalid AGENT_EFFORT_DEFAULT '" + repoEffort + "': expected one of "
+  err(3, "invalid AGENT_EFFORT_DEFAULT '" + sanitize(repoEffort) + "': expected one of "
     + EFFORTS.join(", ") + " (or empty for the CLI default). "
     + "Fix it with: gh variable set AGENT_EFFORT_DEFAULT -b <value>");
 }
@@ -118,7 +127,7 @@ for (const tok of body.split(/\s+/)) {
   if (Object.prototype.hasOwnProperty.call(seen, key)) {
     if (seen[key] !== val) {
       err(2, "comment sets " + key + "= more than once with conflicting values ('"
-        + seen[key] + "' vs '" + val + "'); keep exactly one");
+        + sanitize(seen[key]) + "' vs '" + sanitize(val) + "'); keep exactly one");
     }
     continue;
   }
@@ -139,7 +148,7 @@ if (Object.prototype.hasOwnProperty.call(seen, "model")) {
     model = raw;
     modelSource = "comment-override";
   } else {
-    err(2, "invalid model '" + raw + "': use an alias (sonnet, opus, haiku) or a concrete "
+    err(2, "invalid model '" + sanitize(raw) + "': use an alias (sonnet, opus, haiku) or a concrete "
       + "model id of alphanumerics and . _ : / - [ ] with no spaces, quotes, or shell "
       + "metacharacters");
   }
@@ -155,7 +164,7 @@ if (Object.prototype.hasOwnProperty.call(seen, "model")) {
 let effort, effortSource;
 if (Object.prototype.hasOwnProperty.call(seen, "effort")) {
   if (!EFFORTS.includes(seen.effort)) {
-    err(2, "invalid effort '" + seen.effort + "': expected one of " + EFFORTS.join(", "));
+    err(2, "invalid effort '" + sanitize(seen.effort) + "': expected one of " + EFFORTS.join(", "));
   }
   effort = seen.effort;
   effortSource = "comment-override";

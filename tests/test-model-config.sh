@@ -181,6 +181,42 @@ fi
 run_mc '@claude model=`touch '"$TMP"'/pwned3` task' 0
 expect_reject "backtick payload is rejected" "sonnet"
 
+# The reject message is echoed into a markdown code fence in a workflow
+# comment: the raw (pre-validation) token must never carry backticks or
+# excessive length, or attacker text can break out of the fence.
+run_mc '@claude model=x```<b>not-markdown</b> task' 0
+expect_reject "fence-breaking backtick payload is rejected" "sonnet"
+if printf '%s' "$MC_ERR" | grep -q '`'; then
+  fail "reject message cannot break out of its markdown fence" "raw backtick echoed: $MC_ERR"
+else
+  pass "reject message cannot break out of its markdown fence"
+fi
+
+run_mc '@claude model=```x model=```y task' 0
+expect_reject "conflicting duplicate with fence-breaking values is rejected" "model"
+if printf '%s' "$MC_ERR" | grep -q '`'; then
+  fail "duplicate-conflict message cannot break out of its markdown fence" "raw backtick echoed: $MC_ERR"
+else
+  pass "duplicate-conflict message cannot break out of its markdown fence"
+fi
+
+run_mc '@claude effort=```high task' 0
+expect_reject "fence-breaking effort payload is rejected" "low, medium, high, xhigh, max"
+if printf '%s' "$MC_ERR" | grep -q '`'; then
+  fail "effort reject message cannot break out of its markdown fence" "raw backtick echoed: $MC_ERR"
+else
+  pass "effort reject message cannot break out of its markdown fence"
+fi
+
+LONG_TOKEN="$(printf 'a%.0s' $(seq 1 200))"
+run_mc "@claude model=$LONG_TOKEN task" 0
+expect_reject "overlong model token is rejected" "sonnet"
+if printf '%s' "$MC_ERR" | grep -q 'a\{60\}'; then
+  fail "reject message truncates untrusted tokens" "long raw value echoed: $MC_ERR"
+else
+  pass "reject message truncates untrusted tokens"
+fi
+
 run_mc '@claude model="quoted model" task' 0
 expect_reject "quoted value with spaces is rejected" "sonnet"
 
