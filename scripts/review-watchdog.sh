@@ -57,7 +57,7 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKFLOW_PATH=".github/workflows/pr-review.yml"
 # Same merge-control paths pr-review.yml guards (issue #19).
-CONTROL_PATH_RE='^\.github/workflows/pr-review\.yml$|^scripts/ci-gate\.sh$|^scripts/app-auth\.sh$|^scripts/review-verdict\.sh$'
+CONTROL_PATH_RE='^\.github/workflows/pr-review\.yml$|^scripts/ci-gate\.sh$|^scripts/app-auth\.sh$|^scripts/review-verdict\.sh$|^scripts/review-verdict-recover\.sh$'
 ALERT_MARKER='<!-- review-watchdog:mode='
 RETRIGGER_MARKER='<!-- review-watchdog:action=retrigger'
 

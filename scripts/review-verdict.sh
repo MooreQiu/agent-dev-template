@@ -45,16 +45,23 @@
 #   scripts/review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
 #                                  [--gate-target DIR]
 #   scripts/review-verdict.sh status <pr> [--artifact FILE] [--evidence-dir DIR]
+#   scripts/review-verdict.sh parse <pr> --reviewer-output FILE
 #
 #   --evidence-dir defaults to $CI_GATE_EVIDENCE; --artifact defaults to
 #   <evidence-dir>/review-verdict.json; --gate-target forwards the reviewed
 #   working tree to ci-gate.sh check.
 #
+#   "parse" (issue #73) exposes the verdict parser on its own: it prints
+#   APPROVE or REQUEST_CHANGES for a usable report and exits 4 otherwise,
+#   with no artifact, evidence or mutation involved. The reviewer-exit
+#   recovery (scripts/review-verdict-recover.sh) reuses it so there is
+#   exactly one verdict parser.
+#
 # Exit codes:
 #   0 ok (a valid REQUEST_CHANGES label counts as ok)
 #   2 usage / invalid arguments
 #   3 verdict artifact missing, malformed or inconsistent
-#   4 reviewer output carries no exactly-once usable VERDICT line (write)
+#   4 reviewer output carries no exactly-once usable VERDICT line (write, parse)
 #   5 merge or review-status mutation failed
 #   6 CI gate evidence missing, tampered with or rejected
 #   7 PR head unresolvable or changed since the review
@@ -75,6 +82,7 @@ Usage:
   review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
                         [--gate-target DIR]
   review-verdict.sh status <pr> [--artifact FILE] [--evidence-dir DIR]
+  review-verdict.sh parse <pr> --reviewer-output FILE
 EOF
   exit 2
 }
@@ -83,7 +91,7 @@ EOF
 MODE="$1"
 PR="$2"
 case "$MODE" in
-  write | merge | status) ;;
+  write | merge | status | parse) ;;
   *) usage ;;
 esac
 shift 2
@@ -93,13 +101,14 @@ REVIEWER_OUT=""
 HEAD_SHA_IN=""
 ARTIFACT=""
 EVIDENCE="${CI_GATE_EVIDENCE:-}"
+EVIDENCE_ARG=""
 GATE_TARGET=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reviewer-output) [ $# -ge 2 ] || usage; REVIEWER_OUT="$2"; shift 2 ;;
     --head-sha) [ $# -ge 2 ] || usage; HEAD_SHA_IN="$2"; shift 2 ;;
     --artifact) [ $# -ge 2 ] || usage; ARTIFACT="$2"; shift 2 ;;
-    --evidence-dir) [ $# -ge 2 ] || usage; EVIDENCE="$2"; shift 2 ;;
+    --evidence-dir) [ $# -ge 2 ] || usage; EVIDENCE="$2"; EVIDENCE_ARG="$2"; shift 2 ;;
     --gate-target) [ $# -ge 2 ] || usage; GATE_TARGET="$2"; shift 2 ;;
     *) usage ;;
   esac
@@ -107,6 +116,10 @@ done
 
 if [ "$MODE" = write ]; then
   { [ -n "$REVIEWER_OUT" ] && [ -n "$HEAD_SHA_IN" ]; } || usage
+elif [ "$MODE" = parse ]; then
+  # Pure parsing: no head binding, artifact, evidence or gate inputs.
+  { [ -n "$REVIEWER_OUT" ] && [ -z "$HEAD_SHA_IN" ] && [ -z "$ARTIFACT" ] &&
+    [ -z "$EVIDENCE_ARG" ] && [ -z "$GATE_TARGET" ]; } || usage
 else
   { [ -z "$REVIEWER_OUT" ] && [ -z "$HEAD_SHA_IN" ]; } || usage
 fi
@@ -133,28 +146,28 @@ resolve_evidence() {
   [ -n "$DIGEST" ] || die 6 "cannot digest the gate evidence under $EVIDENCE"
 }
 
-# ------------------------------------------------------------- write mode ---
-if [ "$MODE" = write ]; then
-  [ -f "$REVIEWER_OUT" ] || die 4 "reviewer output not found: $REVIEWER_OUT"
-  [ -s "$REVIEWER_OUT" ] || die 4 "reviewer output is empty: $REVIEWER_OUT"
-  is_sha "$HEAD_SHA_IN" ||
-    die 2 "--head-sha must be a 40-character lowercase hex SHA (got: $HEAD_SHA_IN)"
-
-  RUN_ID="${GITHUB_RUN_ID:-}"
-  [ -n "$RUN_ID" ] || die 8 "write requires GITHUB_RUN_ID (run identity binding)"
-
-  # The verdict token counts in exactly two shapes, case-sensitive, and the
-  # whole report must carry it exactly once (issue #62):
-  #   1. a line STARTING with "VERDICT: APPROVE" or "VERDICT: REQUEST_CHANGES"
-  #      (the prompt-pinned strict format; trailing prose is fine), anywhere;
-  #   2. within the first 10 lines only, a markdown heading embedding the
-  #      token after an em-dash separator, e.g. "## Independent audit —
-  #      VERDICT: APPROVE" (PR #58's shape).
-  # Everything else -- indented, quoted, lowercased or space-less look-alikes,
-  # headings without the em-dash separator, headings past line 10 -- is prose.
-  # Zero matches, more than one match (duplicates count even when they agree)
-  # or two tokens on a single line are all ambiguous and fail closed (exit 4);
-  # tolerance never widens into an ambiguity path to merging.
+# ---------------------------------------------------------- verdict parser ---
+# parse_verdict <file>: print APPROVE or REQUEST_CHANGES for a usable report;
+# exit 4 when the file is missing, empty, or carries no exactly-once usable
+# VERDICT line. Shared by "write" (issue #19) and "parse" (issue #73) so the
+# repo has exactly one verdict parser.
+#
+# The verdict token counts in exactly two shapes, case-sensitive, and the
+# whole report must carry it exactly once (issue #62):
+#   1. a line STARTING with "VERDICT: APPROVE" or "VERDICT: REQUEST_CHANGES"
+#      (the prompt-pinned strict format; trailing prose is fine), anywhere;
+#   2. within the first 10 lines only, a markdown heading embedding the
+#      token after an em-dash separator, e.g. "## Independent audit —
+#      VERDICT: APPROVE" (PR #58's shape).
+# Everything else -- indented, quoted, lowercased or space-less look-alikes,
+# headings without the em-dash separator, headings past line 10 -- is prose.
+# Zero matches, more than one match (duplicates count even when they agree)
+# or two tokens on a single line are all ambiguous and fail closed (exit 4);
+# tolerance never widens into an ambiguity path to merging.
+parse_verdict() {
+  REPORT_FILE="$1"
+  [ -f "$REPORT_FILE" ] || die 4 "reviewer output not found: $REPORT_FILE"
+  [ -s "$REPORT_FILE" ] || die 4 "reviewer output is empty: $REPORT_FILE"
   VERDICT=""
   matches=0
   lineno=0
@@ -169,7 +182,7 @@ if [ "$MODE" = write ]; then
       esac
     done
     if [ "$tokens" -gt 1 ]; then
-      die 4 "line $lineno of $REVIEWER_OUT carries $tokens VERDICT tokens; ambiguous, refusing to pick one"
+      die 4 "line $lineno of $REPORT_FILE carries $tokens VERDICT tokens; ambiguous, refusing to pick one"
     fi
     [ "$tokens" -eq 1 ] || continue
     v=""
@@ -190,12 +203,39 @@ if [ "$MODE" = write ]; then
     [ -n "$v" ] || continue
     VERDICT="$v"
     matches=$((matches + 1))
-  done < "$REVIEWER_OUT"
+  done < "$REPORT_FILE"
   if [ "$matches" -ne 1 ]; then
     [ "$matches" -eq 0 ] ||
-      die 4 "$matches VERDICT lines in $REVIEWER_OUT; exactly one is required, refusing to pick"
-    die 4 "no usable VERDICT line in $REVIEWER_OUT: need exactly one line starting with 'VERDICT: APPROVE' or 'VERDICT: REQUEST_CHANGES' (a markdown heading embedding it after an em-dash within the first 10 lines also counts)"
+      die 4 "$matches VERDICT lines in $REPORT_FILE; exactly one is required, refusing to pick"
+    die 4 "no usable VERDICT line in $REPORT_FILE: need exactly one line starting with 'VERDICT: APPROVE' or 'VERDICT: REQUEST_CHANGES' (a markdown heading embedding it after an em-dash within the first 10 lines also counts)"
   fi
+  printf '%s\n' "$VERDICT"
+}
+
+# ------------------------------------------------------------ parse mode ---
+# Issue #73: the parser on its own -- no artifact, no evidence, no mutation.
+# Used by scripts/review-verdict-recover.sh so a verdict comment posted
+# before a reviewer crash is honored under the exact same rules as a live
+# report; there is exactly one verdict parser in the repo.
+if [ "$MODE" = parse ]; then
+  parse_verdict "$REVIEWER_OUT"
+  exit 0
+fi
+
+# ------------------------------------------------------------- write mode ---
+if [ "$MODE" = write ]; then
+  [ -f "$REVIEWER_OUT" ] || die 4 "reviewer output not found: $REVIEWER_OUT"
+  [ -s "$REVIEWER_OUT" ] || die 4 "reviewer output is empty: $REVIEWER_OUT"
+  is_sha "$HEAD_SHA_IN" ||
+    die 2 "--head-sha must be a 40-character lowercase hex SHA (got: $HEAD_SHA_IN)"
+
+  RUN_ID="${GITHUB_RUN_ID:-}"
+  [ -n "$RUN_ID" ] || die 8 "write requires GITHUB_RUN_ID (run identity binding)"
+
+  # No command substitution: a die inside $(...) would only exit the subshell
+  # and the failure would be swallowed. parse_verdict sets VERDICT as a
+  # global; its stdout is discarded here.
+  parse_verdict "$REVIEWER_OUT" >/dev/null
 
   resolve_evidence
 

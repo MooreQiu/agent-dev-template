@@ -110,7 +110,8 @@ jobs:
           protected_patterns='^\.github/workflows/pr-review\.yml$
           ^scripts/ci-gate\.sh$
           ^scripts/app-auth\.sh$
-          ^scripts/review-verdict\.sh$'
+          ^scripts/review-verdict\.sh$
+          ^scripts/review-verdict-recover\.sh$'
           fork="$(git -C reviewed merge-base "$BASE" HEAD)"
           hits="$(git -C reviewed diff --name-only "$fork" HEAD | grep -E "$protected_patterns" || true)"
           if [ -n "$hits" ]; then
@@ -118,7 +119,7 @@ jobs:
             printf 'merge-control path changes: %s\n' "$hits"
             gh pr comment "$N" --body "🔒 本 PR 修改了审计/合并控制路径（pr-review.yml、
             scripts/ci-gate.sh、scripts/app-auth.sh、
-            scripts/review-verdict.sh）。按 issue #19，本运行的策略与编排一律取 base 修订，这些改动不生效；自动合并已禁用，请人工审查后合并。" || true
+            scripts/review-verdict.sh、scripts/review-verdict-recover.sh）。按 issue #19，本运行的策略与编排一律取 base 修订，这些改动不生效；自动合并已禁用，请人工审查后合并。" || true
           else
             echo "protected=false" >> "$GITHUB_OUTPUT"
           fi
@@ -141,12 +142,20 @@ jobs:
       # pushing. Reviewer model/role comes from repo vars (issue #10 的 Sol
       # review role 未来接入这里)；verdict 完整性不依赖任何特定模型。
       - name: Independent peer review (disposable workspace)
+        id: review
         run: |
           N="${{ github.event.pull_request.number }}"
           REVIEW_WS="$RUNNER_TEMP/review-workspace"
           rm -rf "$REVIEW_WS"
           cp -a "$GITHUB_WORKSPACE/reviewed" "$REVIEW_WS"
           gh pr comment "$N" --body "🤖 独立审计开始（peer review，与作者零上下文共享）。" || true
+          # Issue #73: recovery window anchor. If the session dies AFTER
+          # posting its report, comments created at/after this moment may be
+          # honored; 60s of clock-skew tolerance is safe because within one
+          # run attempt no earlier verdict comment can exist anyway.
+          REVIEW_START=$(( $(date -u +%s) - 60 ))
+          RECOVERED_REPORT="$RUNNER_TEMP/reviewer-verdict-recovered.md"
+          : > "$RECOVERED_REPORT"
           set +e
           ( cd "$REVIEW_WS" && claude -p "你是独立代码审计 agent。PR 的作者也是 AI，但你与它无任何上下文共享，默认假设它有错。审计本仓库 PR #$N：
           1) gh pr view $N 与 gh pr diff $N 获取改动与理由
@@ -167,6 +176,18 @@ jobs:
           RC=$?
           set -e
           if [ $RC -ne 0 ]; then
+            # Issue #73: a completed verdict must not die with the session.
+            # Honor it only when exactly one report comment posted in this
+            # window by the reviewer bot identity parses (review-verdict.sh
+            # parse, via review-verdict-recover.sh); otherwise the existing
+            # fail-closed behavior below applies unchanged.
+            if VERDICT="$(bash scripts/review-verdict-recover.sh "$N" \
+                --since "$REVIEW_START" --out "$RECOVERED_REPORT")"; then
+              echo "recovered=true" >> "$GITHUB_OUTPUT"
+              echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+              gh pr comment "$N" --body "⚠️ 审计会话异常退出（exit $RC），但本次运行已发布格式合法的 verdict 报告（$VERDICT）：按已发布 verdict 继续走 verdict 执行链（issue #73）。" || true
+              exit 0
+            fi
             gh pr comment "$N" --body "⚠️ 审计运行异常（exit $RC），为安全起见不自动合并。"
             exit 1
           fi
@@ -177,8 +198,16 @@ jobs:
       - name: Record verdict artifact
         if: steps.control.outputs.protected != 'true'
         run: |
+          # Issue #73: when the reviewer session died after posting its
+          # report, the recovered comment body replaces the (empty) session
+          # output as the distilled report; binding and enforcement below
+          # are unchanged.
+          REPORT="$RUNNER_TEMP/reviewer-output.md"
+          if [ "${{ steps.review.outputs.recovered }}" = "true" ]; then
+            REPORT="$RUNNER_TEMP/reviewer-verdict-recovered.md"
+          fi
           bash scripts/review-verdict.sh write "${{ github.event.pull_request.number }}" \
-            --reviewer-output "$RUNNER_TEMP/reviewer-output.md" \
+            --reviewer-output "$REPORT" \
             --head-sha "${{ github.event.pull_request.head.sha }}"
 
       - name: Upload review evidence (audit trail)
@@ -191,6 +220,7 @@ jobs:
             ${{ env.CI_GATE_EVIDENCE }}/gate.json
             ${{ env.CI_GATE_EVIDENCE }}/test-first.json
             ${{ runner.temp }}/reviewer-output.md
+            ${{ runner.temp }}/reviewer-verdict-recovered.md
           if-no-files-found: error
 
       # Display channel (issue #55): mirror the verified verdict into
