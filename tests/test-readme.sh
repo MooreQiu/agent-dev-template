@@ -89,7 +89,9 @@ if [ -f "$DOC" ]; then
     check "documents known limitations" contains "$DOC" '[Kk]nown limitations'
 
     # AC5: every relative link target resolves inside the repo.
-    for target in $(sed -n 's/.*](\([^) ]*\)).*/\1/p' "$DOC" | sort -u); do
+    # grep -o enumerates every ](target) occurrence per line; the sed only
+    # strips the delimiter pair, so multiple links on one line are all seen.
+    for target in $(grep -oE '\]\([^) ]+\)' "$DOC" | sed -E 's/^\]\(([^) ]+)\)$/\1/' | sort -u); do
         case "$target" in
             http://* | https://* | '#'*) continue ;;
         esac
