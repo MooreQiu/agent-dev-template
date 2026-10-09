@@ -57,7 +57,7 @@ It is not for you if you want a hosted SaaS, do not want a model API key stored 
 ## Prerequisites
 
 - **GitHub** and the `gh` CLI, authenticated (`gh auth status` shows `Logged in`).
-- **git** on your machine; Node 20 is pinned by the bootstrap for CI and local runs.
+- **git** on your machine; the Node version pinned in `.agent/project.json` (currently 22) is installed by the bootstrap for CI and local runs.
 - **A model API key** (cost prerequisite): any Anthropic-compatible endpoint works -- Zhipu GLM by default, official Anthropic supported. Every dispatch, sweep, review, and scheduler run spends tokens on your provider; the nightly sweep is capped at 3 issues per run by default. See the provider table in [INSTALL.md](INSTALL.md).
 - **One manual web toggle** (cannot be scripted): Settings -> Actions -> General -> Workflow permissions -> *Allow GitHub Actions to create and approve pull requests*.
 - **Optional, recommended**: a GitHub App for automation authentication, which removes the manual-approval gate on bot activity -- see [docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md). Security prerequisites and practices are summarized below under [Security notes](#security-notes).
@@ -67,7 +67,7 @@ It is not for you if you want a hosted SaaS, do not want a model API key stored 
 Supported:
 
 - GitHub.com repositories (public, or private with the noted limitations), `gh` CLI, GitHub Actions runners.
-- The headless Claude Code CLI as the worker harness, against any Anthropic-compatible endpoint (switch providers by changing two secrets and two variables).
+- The headless Claude Code CLI as the default worker harness, against any Anthropic-compatible endpoint (switch providers by changing two secrets and two variables); CI dispatch can be extended to the codex / gemini / opencode CLIs with the `AGENT_HARNESSES` variable ([docs/HARNESSES.md](docs/HARNESSES.md)).
 - Spec-driven development via Spec Kit (`specify -> plan -> tasks -> implement`), plus the spec pipeline: [docs/SPEC_START.md](docs/SPEC_START.md), [docs/SPEC_CONVERGE.md](docs/SPEC_CONVERGE.md), [docs/SPEC_TRACK.md](docs/SPEC_TRACK.md).
 - Role preflight and pinned, reproducible environments ([docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)).
 - Running the same workflow locally under other harnesses (claude/codex/opencode/gemini) via `scripts/agent.sh` ([docs/HARNESSES.md](docs/HARNESSES.md)).
@@ -168,9 +168,11 @@ A green *PR Review* run is not approval: it only proves the audit completed. App
 
 The dispatch model and reasoning effort resolve by precedence (highest first), decided by `scripts/model-config.sh`:
 
-1. **Comment override**: `@claude model=opus effort=high fix the failing test` -- `model` accepts the aliases `sonnet`/`opus` (default tier), `haiku` (flash tier), or a concrete model name; `effort` accepts `low`/`medium`/`high`/`xhigh`/`max`. Options must be standalone tokens; invalid or ambiguous values are rejected with an explanatory comment and the dispatch does not start.
+1. **Comment override**: `@claude model=opus effort=high fix the failing test` -- `model` accepts the aliases `sonnet`/`opus` (default tier), `haiku` (flash tier; aliases are claude-only), or a concrete model name; `effort` accepts `low`/`medium`/`high`/`xhigh`/`max`. Options must be standalone tokens; invalid or ambiguous values are rejected with an explanatory comment and the dispatch does not start.
 2. **Repository variables**: `AGENT_MODEL_DEFAULT`, `AGENT_MODEL_FLASH` (auto-selected for `trivial` issues), optional `AGENT_EFFORT_DEFAULT`.
 3. **Documented fallback**: `glm-5.3[1m]` / `glm-5.3-flash[1m]`; effort unset (CLI default).
+
+Other enabled harnesses resolve with the same precedence but different knobs: `@codex` reads `AGENT_MODEL_CODEX` and supports `effort=low|medium|high`; `@gemini` (`AGENT_MODEL_GEMINI`) and `@opencode` (`AGENT_MODEL_OPENCODE`, `provider/model` form) take concrete model names only and reject effort overrides. Harnesses beyond `claude` stay off until the `AGENT_HARNESSES` variable lists them; the full per-harness table is in [docs/HARNESSES.md](docs/HARNESSES.md).
 
 Every run reports the endpoint (never secrets), the resolved model, and the source of each setting. Note the provider limitation: effort passes through Claude Code `--effort`; official Anthropic endpoints honor it, third-party compatible endpoints may not -- the report marks such cases `provider-dependent (unknown)`.
 
@@ -195,7 +197,7 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 - Issue and PR bodies are **untrusted input**: agent prompts carry explicit instructions not to execute unrelated commands from them; comment overrides pass through a whitelist before reaching the model invocation.
 - Private repositories are recommended; rotate tokens regularly and keep credentials in GitHub secrets only.
 - Automation runs with `acceptEdits` and a gh/git/npm tool allowlist; the nightly sweep is capped.
-- `AGENT_ALLOWED_ACTORS` (optional variable) restricts who may trigger `@claude` dispatches; bot-generated comments are always filtered to prevent recursion.
+- `AGENT_ALLOWED_ACTORS` (optional variable) restricts who may trigger agent dispatches; bot-generated comments are always filtered to prevent recursion.
 
 ## Known limitations
 
@@ -211,12 +213,13 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 | Agent rules | `AGENTS.md` | Workflow and red lines every harness reads first |
 | Project constitution | `.specify/memory/constitution.md` | TDD / small steps / safety, highest priority |
 | Project runtime config | `.agent/project.json` | Machine-readable single source for build/test commands |
-| Dispatch | `.github/workflows/claude.yml` | `@claude` comment / assignment trigger |
+| Dispatch | `.github/workflows/claude.yml` | `@claude` / `@codex` / `@gemini` / `@opencode` comment or assignment triggers the matching harness (bot comments always filtered to prevent recursion) |
 | Scheduler + nightly sweep | `agent-scheduler.yml`, `agent-sweep.yml` | Dependency- and priority-aware queue advance, lease reconciliation |
 | Peer review + auto-merge | `.github/workflows/pr-review.yml`, `scripts/review-verdict.sh` | Audit distilled into a verdict artifact bound to the PR, reviewed head SHA, and review run (bot comments are display-only); the merge decider re-checks gate evidence and an unchanged head before squash merge; merge-control-path PRs merge manually |
 | CI gate | `.github/workflows/ci.yml`, `scripts/ci-gate.sh` | Deterministic quality gate + test-first evidence |
 | Claim protocol | `scripts/agent-claim.sh` | Atomic claims with owner and lease |
 | Model resolution | `scripts/model-config.sh` | Comment override > repo vars > fallback |
+| Harness switching | `scripts/agent.sh`, [docs/HARNESSES.md](docs/HARNESSES.md) | One source of truth in AGENTS.md; claude/codex/opencode/gemini |
 | Setup / deploy | `setup.sh`, `deploy.sh` | One-shot configuration / deployment into existing repos |
 | Local commands | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
 | Spec Kit skills | `.claude/skills/`, `.codex/skills/` | specify -> plan -> tasks -> implement |

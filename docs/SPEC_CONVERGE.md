@@ -7,8 +7,12 @@ issue #21 的落地说明：任务队列排空 ≠ 项目满足 spec。closed is
 ```
 任务队列排空（feature milestone 内无未关闭的非 blocked issue，且 tasks.md 未勾选项都有 issue）
   → workflow_dispatch 触发 spec-converge.yml（输入 spec 路径 + revision + 可选 budget）
+  → 共享环境引导（scripts/bootstrap-env.sh：项目配置校验、lockfile 安装、
+    钉住的 agent 工具、认证与非交互检查，一律 fail-fast）
   → 预检 implement 角色（scripts/agent-preflight.sh verify implement）
-  → --precheck 校验队列已排空，未排空则以 notice 结束，稍后重跑
+  → --precheck（经 scripts/spec-converge-precheck.sh 适配，见下节）校验队列已排空：
+    未排空 → outcome=deferred，跳过 agent 评估、修复调度与完成发布，稍后重跑；
+    门禁失败（如审批过期）→ fail closed，作业以原退出码失败
   → 收敛 agent 以 implement 角色显式调用 /speckit-converge，对集成目标分支
     做 spec/plan/需求/验收场景评估，产出 findings.jsonl
   → scripts/spec-converge.sh 跑配置的集成验收（复用 scripts/ci-gate.sh run）
@@ -34,6 +38,18 @@ scripts/spec-converge.sh specs/<feature>/spec.md <approved-revision> [options]
 | `--json` | stdout 输出单行 JSON 摘要，人类可读日志走 stderr |
 
 退出码：`0` 成功（complete 或 remediation-scheduled）；`1` 门禁/输入失败；`2` 用法错误；`3` 队列未排空（稍后重试，不是错误）；`4` blocked——有需求在预算内无法收敛或超出审批范围，需要人工决策。
+
+## 预检 outcome 与 workflow 控制流（issue #43）
+
+workflow 的预检步骤调用 `scripts/spec-converge-precheck.sh <spec> <revision> --precheck --json`：参数原样转发给入口（`--precheck` 由适配器强制追加，幂等），再把入口退出码映射为显式 outcome 写入 Actions step output（`$GITHUB_OUTPUT`），并始终在 stdout 打印 `outcome=<value>`：
+
+| 入口退出码 | outcome | 适配器退出 | workflow 行为 |
+|---|---|---|---|
+| 0（队列已排空） | `ready` | 0 | 正常路径：agent 评估 → 验收/调度 → 完成/发布 |
+| 3（队列未排空） | `deferred` | 0（附 `::notice::`） | 后续步骤带 `if: steps.precheck.outputs.outcome == 'ready'`，agent 评估、修复 issue 创建与完成发布**整体跳过** |
+| 其他（审批过期、用法错误等） | `failed` | 原退出码（附 `::error::`） | fail closed：作业失败，后续步骤不执行 |
+
+把退出码 3 映射成 step exit 0 只会得到一条 notice——步骤成功并不会跳过同 job 的后续步骤，评估与发布照常执行；所以必须由显式 outcome 门控后续步骤。
 
 ## findings.jsonl 契约
 
@@ -72,4 +88,4 @@ scripts/spec-converge.sh specs/<feature>/spec.md <approved-revision> [options]
 
 ## 验收测试
 
-`tests/test-spec-converge.sh`（`npm test` 一并运行）：审批门禁（缺失/过期）、队列排空（milestone 内 open issue、无 issue 的未勾选任务、open 修复工作不重复创建）、closed issue 之外的缺失需求、集成回归（验收失败合成缺口 + 证据）、修复重跑去重（closed attempt 后开新 attempt）、有限预算耗尽转 blocked（含 blocked 报告去重）、超出审批范围转 blocked、真完成（complete.json 需求→证据追溯、关闭 milestone、spec/plan/tasks 不可变）、验收失败压过 verified 发现、findings 契约校验（未知 kind / 重复 id / 未知需求编号）、非法 budget、workflow / 角色 / 文档接线。
+`tests/test-spec-converge.sh`（`npm test` 一并运行）：审批门禁（缺失/过期）、队列排空（milestone 内 open issue、无 issue 的未勾选任务、open 修复工作不重复创建）、closed issue 之外的缺失需求、集成回归（验收失败合成缺口 + 证据）、修复重跑去重（closed attempt 后开新 attempt）、有限预算耗尽转 blocked（含 blocked 报告去重）、超出审批范围转 blocked、真完成（complete.json 需求→证据追溯、关闭 milestone、spec/plan/tasks 不可变）、验收失败压过 verified 发现、findings 契约校验（未知 kind / 重复 id / 未知需求编号）、非法 budget、预检 outcome 行为（deferred/ready/failed 三态：未排空跳过评估与发布、排空走正常路径、门禁失败 fail closed）、workflow / 角色 / 文档接线。

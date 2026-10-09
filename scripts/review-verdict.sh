@@ -8,9 +8,11 @@
 # performed the review, and a digest of the CI gate evidence. The merge
 # decider ("merge") re-validates all of that against live PR state right
 # before merging. PR comments -- including the reviewer bots' (issue #13:
-# github-actions[bot] / mooreqiu-agent-dev-bot[bot], whichever identity
-# scripts/app-auth.sh resolved) -- are display-only and never authorize a
-# merge.
+# github-actions[bot] / the AGENT_REVIEWER_BOT_LOGIN repo variable,
+# whichever identity scripts/app-auth.sh resolved; the deployment's login
+# resolves via scripts/reviewer-identity.sh, failing closed to
+# github-actions[bot] alone when unset or malformed) -- are display-only
+# and never authorize a merge.
 #
 # Artifact (JSON, schema 1): schema, pr, verdict, head_sha, run_id,
 # run_attempt, created_at, report, evidence{dir, gate_digest}.
@@ -39,7 +41,7 @@
 #   0 ok (a valid REQUEST_CHANGES label counts as ok)
 #   2 usage / invalid arguments
 #   3 verdict artifact missing, malformed or inconsistent
-#   4 reviewer output carries no usable VERDICT line (write)
+#   4 reviewer output carries no exactly-once usable VERDICT line (write)
 #   5 merge command failed
 #   6 CI gate evidence missing, tampered with or rejected
 #   7 PR head unresolvable or changed since the review
@@ -127,24 +129,59 @@ if [ "$MODE" = write ]; then
   RUN_ID="${GITHUB_RUN_ID:-}"
   [ -n "$RUN_ID" ] || die 8 "write requires GITHUB_RUN_ID (run identity binding)"
 
-  # Only a line-start "VERDICT: <VERDICT>" counts; indented or quoted
-  # look-alikes are prose, and disagreeing verdict lines are ambiguous --
-  # both fail closed instead of guessing.
+  # The verdict token counts in exactly two shapes, case-sensitive, and the
+  # whole report must carry it exactly once (issue #62):
+  #   1. a line STARTING with "VERDICT: APPROVE" or "VERDICT: REQUEST_CHANGES"
+  #      (the prompt-pinned strict format; trailing prose is fine), anywhere;
+  #   2. within the first 10 lines only, a markdown heading embedding the
+  #      token after an em-dash separator, e.g. "## Independent audit —
+  #      VERDICT: APPROVE" (PR #58's shape).
+  # Everything else -- indented, quoted, lowercased or space-less look-alikes,
+  # headings without the em-dash separator, headings past line 10 -- is prose.
+  # Zero matches, more than one match (duplicates count even when they agree)
+  # or two tokens on a single line are all ambiguous and fail closed (exit 4);
+  # tolerance never widens into an ambiguity path to merging.
   VERDICT=""
-  conflict=0
+  matches=0
+  lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    tokens=0
+    rest="$line"
+    while :; do
+      case "$rest" in
+        *"VERDICT: "*) tokens=$((tokens + 1)); rest="${rest#*VERDICT: }" ;;
+        *) break ;;
+      esac
+    done
+    if [ "$tokens" -gt 1 ]; then
+      die 4 "line $lineno of $REVIEWER_OUT carries $tokens VERDICT tokens; ambiguous, refusing to pick one"
+    fi
+    [ "$tokens" -eq 1 ] || continue
+    v=""
     case "$line" in
       "VERDICT: APPROVE"*) v=APPROVE ;;
       "VERDICT: REQUEST_CHANGES"*) v=REQUEST_CHANGES ;;
-      *) continue ;;
     esac
-    [ -n "$VERDICT" ] || VERDICT="$v"
-    [ "$VERDICT" = "$v" ] || conflict=1
+    if [ -z "$v" ] && [ "$lineno" -le 10 ]; then
+      case "$line" in
+        \#*)
+          case "$line" in
+            *"— VERDICT: APPROVE"*) v=APPROVE ;;
+            *"— VERDICT: REQUEST_CHANGES"*) v=REQUEST_CHANGES ;;
+          esac
+          ;;
+      esac
+    fi
+    [ -n "$v" ] || continue
+    VERDICT="$v"
+    matches=$((matches + 1))
   done < "$REVIEWER_OUT"
-  [ -n "$VERDICT" ] ||
-    die 4 "no line starting with 'VERDICT: APPROVE' or 'VERDICT: REQUEST_CHANGES' in $REVIEWER_OUT"
-  [ "$conflict" -eq 0 ] ||
-    die 4 "conflicting VERDICT lines in $REVIEWER_OUT; refusing to pick one"
+  if [ "$matches" -ne 1 ]; then
+    [ "$matches" -eq 0 ] ||
+      die 4 "$matches VERDICT lines in $REVIEWER_OUT; exactly one is required, refusing to pick"
+    die 4 "no usable VERDICT line in $REVIEWER_OUT: need exactly one line starting with 'VERDICT: APPROVE' or 'VERDICT: REQUEST_CHANGES' (a markdown heading embedding it after an em-dash within the first 10 lines also counts)"
+  fi
 
   resolve_evidence
 

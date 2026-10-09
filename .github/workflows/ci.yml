@@ -36,9 +36,21 @@ jobs:
         with:
           fetch-depth: 0 # full history: test-first evidence walks the PR commits
 
+      # Single source of truth: the runtime pin comes from .agent/project.json
+      # so the provisioned node always matches what scripts/bootstrap-env.sh
+      # enforces -- bumping the pin never leaves a stale literal behind.
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ steps.node_pin.outputs.version }}
 
       - name: Quality gate (configured build/test/lint/typecheck + test-first evidence)
         run: |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Acceptance tests for issue #13: dispatch trigger filtering.
 #
-# Claude Dispatch must only run for human-initiated triggers. Bot activity
+# Agent Dispatch must only run for human-initiated triggers. Bot activity
 # (acknowledgement comments containing @claude, automated assignments, other
 # bot comments) must never recursively start duplicate work.
 #

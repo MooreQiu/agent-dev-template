@@ -7,6 +7,8 @@ issue #16 的落地说明：把"人工审批过的 spec"变成"可被 agent 认�
 ```
 人工审批 spec（提交 approval.json，记录不可变 revision）
   → workflow_dispatch 触发 spec-start.yml（输入 spec 路径 + revision）
+  → 共享环境引导（scripts/bootstrap-env.sh：项目配置校验、lockfile 安装、
+    钉住的 agent 工具、认证与非交互检查，一律 fail-fast）
   → 预检 specify 角色（scripts/agent-preflight.sh verify specify）
   → 缺 plan.md / tasks.md 时由规划 agent 自主生成（/speckit-plan、/speckit-tasks）
   → scripts/spec-start.sh 校验门禁后把 tasks.md 转成 issues

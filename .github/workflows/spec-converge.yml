@@ -48,12 +48,24 @@ jobs:
         with:
           fetch-depth: 0 # the approved revision must resolve
 
+      # Single source of truth: the runtime pin comes from .agent/project.json
+      # so the provisioned node always matches the configured runtime --
+      # bumping the pin never leaves a stale literal behind.
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ steps.node_pin.outputs.version }}
 
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Bootstrap environment (pinned tooling, fail-fast checks)
+        run: bash scripts/bootstrap-env.sh
 
       - name: Configure git
         run: |
@@ -63,30 +75,28 @@ jobs:
       - name: Preflight the implement role
         run: bash scripts/agent-preflight.sh verify implement
 
-      # Convergence only makes sense once every scheduled task closed; an
-      # undrained queue exits 3 and stops as a notice, not a failure.
+      # Convergence only makes sense once every scheduled task closed. The
+      # precheck adapter maps an undrained queue (entrypoint exit 3) to the
+      # explicit step outcome "deferred" so evaluation and publication are
+      # genuinely skipped below; any other precheck error fails the job
+      # closed instead of silently continuing.
       - name: Check the task queue has drained
+        id: precheck
         run: |
           FEATURE_DIR=$(dirname "$SPEC")
           echo "FEATURE_DIR=$FEATURE_DIR" >> "$GITHUB_ENV"
-          set +e
-          bash scripts/spec-converge.sh "$SPEC" "$REVISION" --precheck --json
-          rc=$?
-          set -e
-          case "$rc" in
-            0) ;;
-            3) echo "::notice::Task queue for $SPEC is not drained yet; rerun after the remaining work closes." ; exit 0 ;;
-            *) exit "$rc" ;;
-          esac
+          bash scripts/spec-converge-precheck.sh "$SPEC" "$REVISION" --precheck --json
 
       # The converge skill assesses the integrated default branch against the
       # approved spec, plan, requirements, and acceptance scenarios and writes
       # machine-readable findings; closed issues alone are not evidence.
       - name: Evaluate the integrated branch (converge)
+        if: steps.precheck.outputs.outcome == 'ready'
         run: |
           AGENT=claude scripts/agent.sh "Converge the feature whose approved spec is $SPEC at revision $REVISION on the integrated default branch. Explicitly invoke the /speckit-converge skill, then write your findings as JSON Lines to $FEATURE_DIR/convergence/findings.jsonl following the schema in docs/SPEC_CONVERGE.md: one object per line with id, requirement, kind (missing, regression, or verified), summary, evidence; cite the requirement id exactly as it appears in the approved spec. Evaluate the whole repository against the spec, plan, requirements, and acceptance scenarios; closed issues and merged PRs alone are not evidence of completion. Never modify spec.md, approval.json, plan.md, or tasks.md; report requirements outside the approved spec instead of implementing them. After invoking the skill, record it with: bash scripts/agent-preflight.sh note-invocation implement speckit-converge"
 
       - name: Verify completion and schedule remaining work
+        if: steps.precheck.outputs.outcome == 'ready'
         run: |
           set +e
           bash scripts/spec-converge.sh "$SPEC" "$REVISION" --findings "$FEATURE_DIR/convergence/findings.jsonl" --budget "$BUDGET" --json

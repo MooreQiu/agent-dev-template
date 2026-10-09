@@ -18,6 +18,15 @@
 #      .agent/runs/task-*.json) and update claim bookkeeping: succeeded
 #      claims are kept until reconcile cleans them; failures release the
 #      claim and requeue with agent-failed
+#   6. run inside the project budgets (issue #22): scripts/agent-budget.sh
+#      gates the run before it starts and between every stage -- retry
+#      and repair caps, elapsed time (a watchdog kills a runaway
+#      harness), pipeline steps, and the agent-paused/agent-cancelled
+#      human controls. Budget stops persist a budget_exhausted outcome,
+#      publish the partial branch so state stays resumable, and either
+#      requeue (retry budget remaining) or block (caps reached, summary
+#      comment on the issue). Durable progress lives in
+#      refs/agent-status/<key> on the shared origin.
 #
 # Usage:
 #   agent-task.sh prepare <key> [--target REF] [--root DIR]
@@ -27,11 +36,14 @@
 #              --owner O (default AGENT_OWNER or a run-unique fallback)
 #
 # Exit codes (run): 0 verified success, 3 claim held elsewhere,
-# 4 verification failed, 5 preparation failed, 130 cancelled.
+# 4 verification failed, 5 preparation failed, 6 budget exhausted,
+# 7 stopped by a human control (agent-paused/agent-cancelled),
+# 130 cancelled.
 set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAIM="$SELF_DIR/agent-claim.sh"
+BUDGET="$SELF_DIR/agent-budget.sh"
 REMOTE="${AGENT_CLAIM_REMOTE:-origin}"
 DEFAULT_TARGET="$REMOTE/main"
 DEFAULT_LEASE="${AGENT_LEASE_SECONDS:-10800}"
@@ -73,6 +85,106 @@ outcome_write() { # outcome_write <json> <log-file-or-empty>
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$GITHUB_STEP_SUMMARY" ]; then
     printf '```\n%s\n```\n' "$1" >> "$GITHUB_STEP_SUMMARY" || true
   fi
+}
+
+# --- run budgets and durable status (issue #22) --------------------------------
+# All helpers are best-effort no-ops when scripts/agent-budget.sh is absent
+# (older deployments), so the pipeline degrades to its pre-budget behavior.
+
+budget_record() { # budget_record --field k=v ...
+  [ -x "$BUDGET" ] || return 0
+  bash "$BUDGET" record "$KEY" "$@" >/dev/null 2>&1 || true
+}
+
+is_issue_key() {
+  printf '%s' "$KEY" | grep -Eq '^[0-9]+$' && command -v gh >/dev/null 2>&1
+}
+
+publish_partial_work() { # keep resumable state: publish the task branch
+  [ -d "${WT:-}" ] || return 0
+  git -C "$WT" push --quiet "$REMOTE" "HEAD:refs/heads/$BRANCH" >/dev/null 2>&1 || true
+}
+
+budget_outcome() { # budget_outcome <status> <reason> -> persisted run artifact
+  B_PUSH="skipped"
+  [ -d "${WT:-}" ] && B_PUSH="ok"
+  AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  OUTCOME="$(printf '{"key":"%s","status":"%s","branch":"%s","pr":%s,"harness_exit":%s,"push":"%s","test_exit":0,"at":"%s","owner":"%s","reason":"%s"}' \
+    "$KEY" "$1" "$BRANCH" "${VPR:-0}" "${HARNESS_RC:-0}" "$B_PUSH" "$AT" "$OWNER" "$2")"
+  outcome_write "$OUTCOME" ""
+}
+
+announce_blocked() { # announce_blocked: terminal block labels + summary comment
+  is_issue_key || return 0
+  gh issue edit "$KEY" --remove-label agent-claimed >/dev/null 2>&1 || true
+  gh issue edit "$KEY" --add-label blocked >/dev/null 2>&1 || true
+  if [ -x "$BUDGET" ]; then
+    gh issue comment "$KEY" --body "$(bash "$BUDGET" summary "$KEY" 2>/dev/null)" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+budget_stop() { # budget_stop <reason>: exhausted; claim is held, exits 6
+  publish_partial_work
+  budget_outcome budget_exhausted "$1"
+  budget_record --field phase=budget_exhausted --field "last_failure=$1"
+  bash "$CLAIM" release "$KEY" --owner "$OWNER" --reason "budget exhausted" \
+    >/dev/null 2>&1 || true
+  # Caps re-read with fresh counters decide requeue (retry budget left)
+  # versus terminal block (a human must review before more autonomy).
+  TERM_BLOCK=0
+  if [ -x "$BUDGET" ]; then
+    bash "$BUDGET" check "$KEY" >/dev/null 2>&1
+    [ $? -eq 6 ] && TERM_BLOCK=1
+  fi
+  if [ "$TERM_BLOCK" -eq 1 ]; then
+    announce_blocked
+  elif is_issue_key; then
+    gh issue edit "$KEY" --remove-label agent-claimed >/dev/null 2>&1 || true
+    gh issue edit "$KEY" --add-label agent-failed >/dev/null 2>&1 || true
+    gh issue comment "$KEY" --body "Automated run stopped by a run budget ($1); partial work stays on $BRANCH and the task is requeued while retry budget remains." \
+      >/dev/null 2>&1 || true
+  fi
+  printf 'task: budget exhausted -- %s\n' "$1"
+  exit 6
+}
+
+control_stop() { # control_stop <control> <mid|pre>: human pause/cancel, exits 7
+  C_CTL="$1"; C_MODE="${2:-mid}"
+  C_STATUS="$(printf '%s' "$C_CTL" | sed 's/^agent-//')"
+  publish_partial_work
+  budget_outcome "$C_STATUS" "stopped by $C_CTL control"
+  budget_record --field "control=$C_CTL" --field "phase=$C_STATUS" --field last_failure=
+  bash "$CLAIM" release "$KEY" --owner "$OWNER" --reason "$C_CTL" \
+    >/dev/null 2>&1 || true
+  if [ "$C_MODE" = "mid" ] && is_issue_key; then
+    gh issue edit "$KEY" --remove-label agent-claimed >/dev/null 2>&1 || true
+    gh issue comment "$KEY" --body "Automated run stopped by the $C_CTL control; partial work stays on $BRANCH for an idempotent resume." \
+      >/dev/null 2>&1 || true
+  fi
+  printf 'task: stopped by %s control\n' "$C_CTL"
+  exit 7
+}
+
+budget_stage_gate() { # budget_stage_gate <stage-number> <phase>
+  [ -x "$BUDGET" ] || return 0
+  budget_record --field "phase=$2"
+  MAX_STEPS="$(bash "$BUDGET" limit max_steps_per_run 2>/dev/null || true)"
+  if [ -n "$MAX_STEPS" ] && [ "$1" -gt "$MAX_STEPS" ]; then
+    budget_stop "step budget exhausted before stage $1 of the pipeline (max_steps_per_run=$MAX_STEPS)"
+  fi
+  MAX_ELAPSED="$(bash "$BUDGET" limit max_elapsed_seconds_per_run 2>/dev/null || true)"
+  if [ -n "$MAX_ELAPSED" ] && [ "$MAX_ELAPSED" -gt 0 ] \
+     && [ "$(date +%s)" -ge "$((STARTED + MAX_ELAPSED))" ]; then
+    budget_stop "elapsed-time budget exhausted (max_elapsed_seconds_per_run=$MAX_ELAPSED)"
+  fi
+  CK_OUT="$(bash "$BUDGET" check "$KEY" 2>/dev/null)"; CK_RC=$?
+  if [ "$CK_RC" -eq 7 ]; then
+    C_CTL="$(printf '%s' "$CK_OUT" | sed -n 's/.*control: \(agent-[a-z]*\).*/\1/p')"
+    [ -n "$C_CTL" ] || C_CTL=agent-paused
+    control_stop "$C_CTL" mid
+  fi
+  return 0
 }
 
 # --- prepare -------------------------------------------------------------------
@@ -261,17 +373,58 @@ cmd_run() {
   done
   [ "${#CMD[@]}" -gt 0 ] || die "no harness command given after --"
   [ -n "$OWNER" ] || OWNER="task-${GITHUB_WORKFLOW:-local}-run-${GITHUB_RUN_ID:-none}-$$"
+  BRANCH="$(branch_for "$KEY")"
+  WT=""
+  STARTED="$(date +%s)"
+  WATCHDOG=""
+
+  # 0. Budget preflight (issue #22): project-wide caps and the human
+  #    pause/cancel controls are checked before any work starts. Attempts
+  #    burn only after the claim is won, so competing workers never
+  #    double-count, and an interrupted run still leaves its attempt
+  #    behind -- crash loops cannot retry forever.
+  if [ -x "$BUDGET" ]; then
+    PF_OUT="$(bash "$BUDGET" check "$KEY" 2>/dev/null)"; PF_RC=$?
+    case "$PF_RC" in
+      0) ;;
+      6)
+        budget_outcome budget_exhausted "$PF_OUT"
+        budget_record --field phase=budget_exhausted --field "last_failure=$(printf '%s' "$PF_OUT" | sed -n 's/^budget: [^ ]* //p')"
+        announce_blocked
+        printf 'task: budget exhausted -- %s\n' "$PF_OUT"
+        exit 6
+        ;;
+      7)
+        PF_CTL="$(printf '%s' "$PF_OUT" | sed -n 's/.*control: \(agent-[a-z]*\).*/\1/p')"
+        [ -n "$PF_CTL" ] || PF_CTL=agent-paused
+        PF_STATUS="$(printf '%s' "$PF_CTL" | sed 's/^agent-//')"
+        budget_outcome "$PF_STATUS" "$PF_OUT"
+        budget_record --field "control=$PF_CTL" --field "phase=$PF_STATUS" --field last_failure=
+        printf 'task: stopped by %s control\n' "$PF_CTL"
+        exit 7
+        ;;
+      *)
+        die "budget preflight failed (rc $PF_RC); refusing to run unbounded"
+        ;;
+    esac
+  fi
 
   # 1. Atomic claim: the single gate shared by every dispatch path.
   if ! bash "$CLAIM" acquire "$KEY" --owner "$OWNER" --lease "$LEASE"; then
     printf 'task: %s is claimed elsewhere; nothing to do\n' "$KEY"
     exit 3
   fi
-  if printf '%s' "$KEY" | grep -Eq '^[0-9]+$' && command -v gh >/dev/null 2>&1; then
+  if is_issue_key; then
     gh issue edit "$KEY" --add-label agent-claimed >/dev/null 2>&1 || true
   fi
 
+  # Burn one attempt durably before any work (issue #22).
+  REC=(--field attempts=+1 --field phase=claimed)
+  [ -z "${AGENT_SPEC_REVISION:-}" ] || REC=("${REC[@]}" --field "spec_revision=$AGENT_SPEC_REVISION")
+  budget_record "${REC[@]}"
+
   fail_requeue() { # fail_requeue <exit-code> <reason>
+    budget_record --field phase=failed --field "last_failure=$2"
     bash "$CLAIM" release "$KEY" --owner "$OWNER" --reason "$2" >/dev/null 2>&1 || true
     if printf '%s' "$KEY" | grep -Eq '^[0-9]+$' && command -v gh >/dev/null 2>&1; then
       gh issue edit "$KEY" --remove-label agent-claimed >/dev/null 2>&1 || true
@@ -283,8 +436,11 @@ cmd_run() {
 
   CHILD=""
   cancelled() {
+    [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
+    [ -n "$WATCHDOG" ] && wait "$WATCHDOG" 2>/dev/null
     [ -n "$CHILD" ] && kill -TERM "$CHILD" 2>/dev/null
     [ -n "$CHILD" ] && wait "$CHILD" 2>/dev/null
+    budget_record --field phase=cancelled --field "last_failure=run cancelled by signal"
     bash "$CLAIM" release "$KEY" --owner "$OWNER" --reason cancelled >/dev/null 2>&1 || true
     if printf '%s' "$KEY" | grep -Eq '^[0-9]+$' && command -v gh >/dev/null 2>&1; then
       gh issue edit "$KEY" --remove-label agent-claimed >/dev/null 2>&1 || true
@@ -296,6 +452,7 @@ cmd_run() {
   trap cancelled TERM INT
 
   # 2. Isolated, freshly prepared worktree (retries included).
+  budget_stage_gate 2 preparing
   if ! bash "$0" prepare "$KEY" --target "$TARGET"; then
     fail_requeue 5 "worktree preparation failed"
   fi
@@ -303,7 +460,10 @@ cmd_run() {
   WT="$(worktree_for "$ROOT/.agent-work" "$KEY")"
   BRANCH="$(branch_for "$KEY")"
 
-  # 3. Execute the harness inside the worktree.
+  # 3. Execute the harness inside the worktree, under the elapsed-time
+  #    budget: a watchdog terminates a runaway harness at the deadline so
+  #    the stage gate after it records a budget stop instead of hanging.
+  budget_stage_gate 3 executing
   printf 'task: executing harness in %s\n' "$WT"
   HARNESS_RC=0
   (
@@ -311,12 +471,27 @@ cmd_run() {
     exec "${CMD[@]}"
   ) &
   CHILD=$!
+  if [ -x "$BUDGET" ]; then
+    MAX_ELAPSED="$(bash "$BUDGET" limit max_elapsed_seconds_per_run 2>/dev/null || true)"
+    if [ -n "$MAX_ELAPSED" ] && [ "$MAX_ELAPSED" -gt 0 ]; then
+      (
+        sleep "$MAX_ELAPSED"
+        kill -TERM "$CHILD" 2>/dev/null
+      ) &
+      WATCHDOG=$!
+    fi
+  fi
   wait "$CHILD"
   HARNESS_RC=$?
   CHILD=""
+  if [ -n "$WATCHDOG" ]; then
+    kill "$WATCHDOG" 2>/dev/null
+    wait "$WATCHDOG" 2>/dev/null
+  fi
   printf 'task: harness exited %s\n' "$HARNESS_RC"
 
   # 4. Verify artifacts and persist the outcome.
+  budget_stage_gate 4 verifying
   if do_verify "$WT" "$TARGET" "$BRANCH" "$HARNESS_RC"; then
     # 5. Keep the succeeded claim (reconcile cleans it once the issue
     #    closes); record the outcome in the shared registry. VPR is set
@@ -325,6 +500,10 @@ cmd_run() {
       --field status=succeeded --field "branch=$BRANCH" \
       --field "pr=${VPR:-0}" \
       >/dev/null 2>&1 || true
+    # Completion is repository-visible without notification spam: durable
+    # status (refs/agent-status/<key>) carries phase=done and the PR.
+    budget_record --field phase=done --field "branch=$BRANCH" \
+      --field "pr=${VPR:-0}" --field last_failure=
     exit 0
   fi
   fail_requeue 4 "artifact verification failed"
