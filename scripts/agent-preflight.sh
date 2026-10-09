@@ -4,10 +4,13 @@
 # skills (both harness copies), supporting scripts, tools and working
 # directory; stop with an actionable error when anything is missing, and
 # write a run record (role, model, instruction revision, skill hashes).
-# See docs/AGENT_ROLES.md.
+# Also validates the machine-readable project configuration
+# (.agent/project.json) so autonomous development never starts against
+# unresolved placeholders or missing commands. See docs/AGENT_ROLES.md.
 #
 # Usage:
 #   scripts/agent-preflight.sh verify <role>
+#   scripts/agent-preflight.sh verify-project
 #   scripts/agent-preflight.sh note-invocation <role> <skill> [skill...]
 #
 # Exit codes: 0 = pass, 1 = requirement failure, 2 = usage error.
@@ -16,13 +19,17 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 ROLES_FILE="$REPO_ROOT/.agent/roles.json"
+PROJECT_FILE="$REPO_ROOT/.agent/project.json"
 RUNS_DIR="$REPO_ROOT/.agent/runs"
 
 usage() {
   printf '%s\n' \
     "Usage: scripts/agent-preflight.sh verify <role>" \
+    "       scripts/agent-preflight.sh verify-project" \
     "       scripts/agent-preflight.sh note-invocation <role> <skill> [skill...]" \
-    "Roles are defined in .agent/roles.json; run from the repository root."
+    "Roles are defined in .agent/roles.json; the project runtime, commands," \
+    "and pinned agent tooling are defined in .agent/project.json." \
+    "Run from the repository root."
 }
 
 die() { # die <exit-code> <message...>
@@ -52,6 +59,155 @@ valid_roles() {
   sed -n 's/^    "\([a-z][a-z-]*\)": {.*/\1/p' "$ROLES_FILE" | tr '\n' ' '
 }
 
+# --- project configuration (.agent/project.json) ----------------------------
+
+# Minimal JSON access for the controlled project.json format (two-space
+# nesting, one key per line, single-line string and array values).
+
+project_section() { # project_section <name> -- section body, empty if absent
+  [ -f "$PROJECT_FILE" ] || return 1
+  sed -n "/^  \"$1\": {/,/^  }/p" "$PROJECT_FILE" | sed '1d;$d'
+}
+
+project_scalar() { # project_scalar <section> <key> -- scalar value
+  printf '%s\n' "$1" | sed -n "s/^ *\"$2\": \"\(.*\)\",\{0,1\}\$/\1/p"
+}
+
+project_list() { # project_list <block> <key> -- space-separated array values
+  printf '%s\n' "$1" | sed -n "s/^ *\"$2\": \[\(.*\)\],\{0,1\}\$/\1/p" \
+    | tr ',' '\n' | sed 's/^ *"//; s/" *$//' | sed '/^$/d' | tr '\n' ' '
+}
+
+is_placeholder() { # is_placeholder <value> -- true when unresolved template text
+  printf '%s\n' "$1" | grep -Eq '待填|TODO|TBD'
+}
+
+SUPPORTED_LOCKFILES="package-lock.json yarn.lock pnpm-lock.yaml"
+SUPPORTED_INTEGRATIONS="claude"
+
+validate_project_config() { # prints ERROR lines to stderr; rc 1 on failure
+  [ -f "$PROJECT_FILE" ] || {
+    printf 'ERROR: project configuration not found: .agent/project.json (see docs/AGENT_ROLES.md)\n' >&2
+    return 1
+  }
+
+  runtime="$(project_section runtime)"
+  commands="$(project_section commands)"
+  tooling="$(project_section agent_tooling)"
+  auth_block="$(project_section model_auth)"
+  integrations="$(project_list "$(cat "$PROJECT_FILE")" integrations)"
+  auth_envs="$(project_list "$auth_block" any_of_env)"
+
+  errors=0
+
+  rt_name="$(project_scalar "$runtime" name)"
+  rt_version="$(project_scalar "$runtime" version)"
+  rt_lockfile="$(project_scalar "$runtime" lockfile)"
+
+  if [ -z "$rt_name" ] || is_placeholder "$rt_name"; then
+    printf 'ERROR: runtime.name is required in .agent/project.json (unresolved placeholder)\n' >&2
+    errors=$((errors + 1))
+  fi
+  if [ "$rt_name" = "node" ]; then
+    if [ -z "$rt_version" ] || is_placeholder "$rt_version" || \
+       ! printf '%s\n' "$rt_version" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
+      printf 'ERROR: runtime.version must be an exact node version (got '%s')\n' "$rt_version" >&2
+      errors=$((errors + 1))
+    fi
+  fi
+  if [ -n "$rt_lockfile" ]; then
+    if ! printf '%s\n' "$rt_lockfile" | grep -Eq "^($(
+      printf '%s' "$SUPPORTED_LOCKFILES" | tr ' ' '|'
+    ))$"; then
+      printf 'ERROR: unsupported runtime.lockfile '%s' (supported: %s)\n' \
+        "$rt_lockfile" "$SUPPORTED_LOCKFILES" >&2
+      errors=$((errors + 1))
+    elif [ ! -f "$REPO_ROOT/$rt_lockfile" ]; then
+      printf 'ERROR: runtime.lockfile '%s' is declared but missing from the repository\n' \
+        "$rt_lockfile" >&2
+      errors=$((errors + 1))
+    fi
+  fi
+
+  for key in install test; do
+    val="$(project_scalar "$commands" "$key")"
+    if [ -z "$val" ]; then
+      printf 'ERROR: commands.%s is required in .agent/project.json\n' "$key" >&2
+      errors=$((errors + 1))
+    elif is_placeholder "$val"; then
+      printf 'ERROR: commands.%s still contains an unresolved placeholder: '%s'\n' "$key" "$val" >&2
+      errors=$((errors + 1))
+    fi
+  done
+  for key in build lint typecheck; do
+    val="$(project_scalar "$commands" "$key")"
+    if [ -n "$val" ] && is_placeholder "$val"; then
+      printf 'ERROR: commands.%s still contains an unresolved placeholder: '%s'\n' "$key" "$val" >&2
+      errors=$((errors + 1))
+    fi
+  done
+
+  pin="$(project_scalar "$tooling" claude_code)"
+  if ! printf '%s\n' "$pin" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
+    printf 'ERROR: agent_tooling.claude_code must be an exact pinned version, not '%s'\n' "$pin" >&2
+    errors=$((errors + 1))
+  fi
+
+  if [ -z "$integrations" ]; then
+    printf 'ERROR: integrations must list at least one agent integration\n' >&2
+    errors=$((errors + 1))
+  fi
+  for i in $integrations; do
+    case " $SUPPORTED_INTEGRATIONS " in
+      *" $i "*) ;;
+      *)
+        printf 'ERROR: unsupported integration '%s' (supported: %s)\n' \
+          "$i" "$SUPPORTED_INTEGRATIONS" >&2
+        errors=$((errors + 1))
+        ;;
+    esac
+  done
+
+  if [ -z "$auth_envs" ]; then
+    printf 'ERROR: model_auth.any_of_env must list at least one environment variable\n' >&2
+    errors=$((errors + 1))
+  fi
+
+  [ "$errors" -eq 0 ] || return 1
+  return 0
+}
+
+cmd_verify_project() {
+  [ "$(pwd)" = "$REPO_ROOT" ] \
+    || die 1 "wrong working directory: '$(pwd)'; run from the repository root: cd $REPO_ROOT"
+
+  validate_project_config \
+    || die 1 "invalid project configuration (.agent/project.json); fix the errors above"
+
+  runtime="$(project_section runtime)"
+  commands="$(project_section commands)"
+  tooling="$(project_section agent_tooling)"
+  auth_block="$(project_section model_auth)"
+  integrations="$(project_list "$(cat "$PROJECT_FILE")" integrations)"
+  auth_envs="$(project_list "$auth_block" any_of_env)"
+
+  rt_name="$(project_scalar "$runtime" name)"
+  rt_version="$(project_scalar "$runtime" version)"
+  rt_lockfile="$(project_scalar "$runtime" lockfile)"
+  [ -n "$rt_lockfile" ] || rt_lockfile="auto"
+
+  printf 'project configuration valid (.agent/project.json)\n'
+  printf '  runtime: %s %s (lockfile: %s)\n' "$rt_name" "$rt_version" "$rt_lockfile"
+  for key in install build test lint typecheck; do
+    val="$(project_scalar "$commands" "$key")"
+    [ -n "$val" ] || val="(not configured)"
+    printf '  %s: %s\n' "$key" "$val"
+  done
+  printf '  agent tooling: @anthropic-ai/claude-code@%s\n' "$(project_scalar "$tooling" claude_code)"
+  printf '  integrations:%s\n' "$integrations"
+  printf '  model auth env:%s\n' "$auth_envs"
+}
+
 # --- verify ----------------------------------------------------------------
 
 cmd_verify() {
@@ -67,6 +223,10 @@ cmd_verify() {
   cwd="$(pwd)"
   [ "$cwd" = "$REPO_ROOT" ] \
     || die 1 "wrong working directory: '$cwd'; run from the repository root: cd $REPO_ROOT"
+
+  validate_project_config || {
+    die 1 "invalid project configuration (.agent/project.json); run 'scripts/agent-preflight.sh verify-project'"
+  }
 
   instructions="$(block_list "$block" instructions)"
   artifacts="$(block_list "$block" artifacts)"
@@ -226,6 +386,10 @@ case "$cmd" in
   verify)
     [ $# -eq 1 ] || { usage >&2; exit 2; }
     cmd_verify "$1"
+    ;;
+  verify-project)
+    [ $# -eq 0 ] || { usage >&2; exit 2; }
+    cmd_verify_project
     ;;
   note-invocation)
     [ $# -ge 2 ] || { usage >&2; exit 2; }

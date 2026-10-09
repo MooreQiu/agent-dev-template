@@ -5,6 +5,7 @@
 ## 快速使用
 
 ```bash
+bash scripts/agent-preflight.sh verify-project                     # 校验项目运行时配置
 bash scripts/agent-preflight.sh verify <specify|implement|review>   # 预检 + 写运行记录
 bash scripts/agent-preflight.sh note-invocation <role> <skill>      # 记录一次显式技能调用
 bash scripts/sync-skills.sh                                         # 同步技能到 Codex（--check 只校验）
@@ -48,6 +49,28 @@ bash scripts/sync-skills.sh                                         # 同步技�
 
 **发现 ≠ 调用**：实际显式调用某技能后，运行 `note-invocation <role> <skill>`，证据追加到 `.agent/runs/invocations.jsonl`（带 run 文件名、角色、技能、时间）。审计时以 jsonl 为调用证据、以 record 的 `discovered` 为发现证据。
 
+## 项目运行时与环境引导（.agent/project.json）
+
+AGENTS.md「项目信息」的机器可读单一事实源是 `.agent/project.json`，实现与审计（review）环境共用同一套引导：
+
+| 字段 | 含义 |
+|---|---|
+| `runtime.name` / `runtime.version` | 项目运行时；node 必须钉住版本，`bootstrap-env.sh` 会校验本机 node 主版本一致，非 node 运行时走配置的 `commands.install` |
+| `runtime.lockfile` | 锁文件；留空则自动探测 `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`，命中即用冻结安装（`npm ci` / `--frozen-lockfile`） |
+| `commands.install/build/test/lint/typecheck` | 安装/构建/相关测试/lint/类型检查命令；`install` 与 `test` 必填，其余可留空但不得留占位符（`待填`/`TODO`/`TBD` 会被拒绝） |
+| `agent_tooling.claude_code` | 钉住的 Claude Code CLI 版本（必须是精确版本号，`latest` 被拒绝） |
+| `integrations` | 需要的 agent 集成（当前支持 `claude`），引导后逐一验证在 PATH |
+| `model_auth.any_of_env` | 模型认证环境变量（任一非空即通过；只检查存在性，值绝不打印） |
+
+```bash
+bash scripts/bootstrap-env.sh            # 校验配置 → 认证/非交互校验 → lockfile 安装 → 装钉住的 CLI → 验证集成
+bash scripts/bootstrap-env.sh --check    # 只校验配置与前提，不安装
+```
+
+引导全程 fail-fast：配置缺命令/占位符、node 版本不一致、模型认证缺失、gh 未认证、依赖或工具安装失败、集成缺失——一律立即报错退出，绝不挂起等交互输入（`GIT_TERMINAL_PROMPT=0`、`GH_PROMPT_DISABLED=1`，CI 中写入 `GITHUB_ENV`）。三个工作流（claude / agent-sweep / pr-review）统一通过 `scripts/bootstrap-env.sh` 引导，不再手写未钉住的安装命令。
+
+**接入具体项目的设置路径**：1) 编辑 `.agent/project.json` 填真实命令与锁文件；2) `verify-project` 校验（角色 `verify` 也会自动校验并拒绝无效配置）；3) 工作流保持 `scripts/bootstrap-env.sh` 引导步骤即可复现环境。
+
 ## 测试
 
-验收测试在 `tests/test_agent_bootstrap.sh`（`npm test` 会一并运行），覆盖：角色选择、缺文件/缺技能/坏元数据/脚本不可执行、错误工作目录、缺工具启动失败、记录与秘密不泄露、双 harness 同步与漂移、项目专属技能接入。
+验收测试在 `tests/test_agent_bootstrap.sh` 与 `tests/test-project-runtime.sh`（`npm test` 会一并运行），前者覆盖：角色选择、缺文件/缺技能/坏元数据/脚本不可执行、错误工作目录、缺工具启动失败、记录与秘密不泄露、双 harness 同步与漂移、项目专属技能接入；后者覆盖：项目配置校验（缺命令/占位符/未钉版本/未知集成/坏锁文件）、角色预检联动、可复现引导（lockfile 语义、钉住 CLI、认证与非交互 fail-fast）、非 Node 项目、安装与命令执行失败。
