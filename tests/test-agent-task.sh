@@ -100,6 +100,7 @@ case "$cmd" in
     fi
     n="$(cat "$GH_STATE/next-pr")"
     printf '%s\n' "$((n + 1))" > "$GH_STATE/next-pr"
+    mkdir -p "$(dirname "$GH_STATE/pr/$head.json")"
     printf '{"number":%s,"state":"OPEN","url":"https://fixture/pr/%s","body":"%s"}\n' \
       "$n" "$n" "$body" > "$GH_STATE/pr/$head.json"
     echo "https://fixture/pr/$n"
@@ -219,6 +220,7 @@ printf 'resumed work\n' > "$WT/RESUME.md"
 git -C "$WT" add RESUME.md
 git -C "$WT" commit -qm "partial: work without PR"
 git -C "$WT" push -q origin HEAD:refs/heads/agent/issue-51
+git -C "$WT" checkout -q agent/issue-50
 issue_json 51
 ( cd "$WORK/prep/runner" && bash "$WORK/prep/runner/scripts/agent-task.sh" prepare 51 ) \
   > "$WORK/prep/prepare3.out" 2>&1
@@ -261,7 +263,6 @@ check "PR body links the issue" \
   sh -c 'grep -Fq "Closes #60" "$1"' sh "$GH_STATE/pr/agent/issue-60.json"
 check "validation artifact recorded next to the outcome" \
   sh -c 'ls "$1"/.agent/runs/task-60-*.json >/dev/null 2>&1' sh "$WORK/happy/runner"
-RUNLOG="$(cat "$GH_STATE/pr/agent/issue-60.json")"
 check "PR number recorded in the persisted outcome" \
   sh -c '( cd "$1" && bash scripts/agent-claim.sh status 60 2>/dev/null ) | grep -Eq "\"pr\":[1-9][0-9]*"' sh "$WORK/happy/runner"
 
@@ -300,6 +301,7 @@ echo "== run: nonzero exit with a real PR"
 
 make_fixture partial
 issue_json 62
+mkdir -p "$GH_STATE/pr/agent"
 printf '{"number":5,"state":"OPEN","url":"https://fixture/pr/5","body":"Closes #62 plus implementation notes"}\n' \
   > "$GH_STATE/pr/agent/issue-62.json"
 HARNESS_FAIL='

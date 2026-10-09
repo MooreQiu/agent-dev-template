@@ -82,7 +82,8 @@ echo "== lifecycle"
 seed_origin life
 clone_runner life a
 claim_rc() { # claim_rc <runner-dir> [args...]
-  ( cd "$1" && bash "$SCRIPT" "$@" >/dev/null 2>&1 )
+  d="$1"; shift
+  ( cd "$d" && bash "$SCRIPT" "$@" >/dev/null 2>&1 )
 }
 
 claim_rc "$WORK/life/a" acquire 18 --owner worker-a
@@ -141,7 +142,9 @@ wait
 
 RCA="$(cat "$WORK/race/rc-a")"
 RCB="$(cat "$WORK/race/rc-b")"
-WINS=$(( (RCA -eq 0) + (RCB -eq 0) ))
+WINS=0
+[ "$RCA" -eq 0 ] && WINS=$((WINS + 1))
+[ "$RCB" -eq 0 ] && WINS=$((WINS + 1))
 check "exactly one concurrent acquire wins" test "$WINS" -eq 1
 WINNER="$(
   ( cd "$WORK/race/a" && bash "$SCRIPT" status 21 2>/dev/null ) \
