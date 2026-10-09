@@ -66,6 +66,9 @@ jobs:
             3) echo "PLANNING_REQUIRED=1" >> "$GITHUB_ENV" ;;
             *) exit "$rc" ;;
           esac
+          # upload-artifact (@actions/glob) rejects path patterns containing
+          # "." or ".." segments, so derive the feature directory up front.
+          echo "FEATURE_DIR=$(dirname "$SPEC")" >> "$GITHUB_ENV"
 
       # Generate plan.md/tasks.md when missing (validate them when present).
       # Planning proceeds autonomously within the approved constraints; a
@@ -85,7 +88,7 @@ jobs:
         with:
           name: planning-${{ github.event.inputs.revision }}
           path: |
-            ${{ github.event.inputs.spec }}
-            ${{ github.event.inputs.spec }}/../plan.md
-            ${{ github.event.inputs.spec }}/../tasks.md
+            ${{ env.FEATURE_DIR }}/spec.md
+            ${{ env.FEATURE_DIR }}/plan.md
+            ${{ env.FEATURE_DIR }}/tasks.md
           if-no-files-found: error

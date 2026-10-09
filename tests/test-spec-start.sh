@@ -44,6 +44,22 @@ check() { # check <description> <command...>
   if "$@" >/dev/null 2>&1; then ok "$desc"; else bad "$desc"; fi
 }
 
+artifact_path_entries() { # artifact_path_entries <workflow> -> path block entries
+  # Prints the entries of the upload step's "path: |" block. upload-artifact
+  # (@actions/glob) rejects patterns containing "." or ".." segments, so the
+  # entries must be traversal-free.
+  awk '
+    /^ *path: \|/ { inp=1; indent=index($0, "path:") - 1; next }
+    inp {
+      if ($0 ~ /^ *$/) next
+      stripped=$0
+      sub(/^ +/, "", stripped)
+      if (length($0) - length(stripped) <= indent) exit
+      print stripped
+    }
+  ' "$1"
+}
+
 # --- mocked gh (records every call; serves issue list from a TSV fixture) ---
 cat > "$MOCK_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -244,6 +260,17 @@ if [ -f "$WF" ]; then
     sh -c 'grep -q "scripts/spec-start.sh" "$1"' sh "$WF"
   check "workflow fetches full history so the revision resolves" \
     sh -c 'grep -q "fetch-depth: 0" "$1"' sh "$WF"
+
+  ARTIFACT_PATHS="$TMP/artifact-paths.txt"
+  artifact_path_entries "$WF" > "$ARTIFACT_PATHS"
+  check "workflow uploads the spec, plan and tasks artifacts" \
+    sh -c 'grep -q "spec\.md" "$1" && grep -q "plan\.md" "$1" && grep -q "tasks\.md" "$1"' \
+    sh "$ARTIFACT_PATHS"
+  check "artifact upload paths contain no .. segment" \
+    sh -c '! grep -q "\.\." "$1"' sh "$ARTIFACT_PATHS"
+  check "artifact paths derive the feature dir from the spec path" \
+    sh -c 'grep -Fq "FEATURE_DIR=\$(dirname" "$1" && grep -Fq "env.FEATURE_DIR" "$2"' \
+    sh "$WF" "$ARTIFACT_PATHS"
 fi
 
 # ============================================================================
