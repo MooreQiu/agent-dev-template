@@ -16,7 +16,7 @@ bash scripts/sync-skills.sh                                         # 同步技�
 
 | 角色 | 阶段技能（必须显式调用） | 指令文件 | 规格产物 | 支持脚本 | 工具 |
 |---|---|---|---|---|---|
-| specify | `speckit-specify`、`speckit-clarify` | AGENTS.md、constitution.md | spec/checklist 模板 | check-prerequisites、common、resolve-template、create-new-feature | git、gh |
+| specify | `speckit-specify`、`speckit-clarify`、`speckit-plan`、`speckit-tasks` | AGENTS.md、constitution.md | spec/checklist/plan/tasks 模板 | check-prerequisites、common、resolve-template、create-new-feature、setup-plan、setup-tasks | git、gh |
 | implement | `speckit-implement`、`speckit-converge` | AGENTS.md、constitution.md | plan/tasks 模板 | check-prerequisites、common、setup-plan、setup-tasks | git、gh、node、npm |
 | review | `speckit-analyze`、`speckit-checklist` | AGENTS.md、constitution.md | plan/tasks/checklist 模板 | common | git、gh、node、npm |
 

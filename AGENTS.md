@@ -33,7 +33,7 @@
 
 ## 规格驱动（Spec Kit）
 
-新功能优先走 speckit 流程：`/speckit-specify` →（可选 `/speckit-clarify`）→ `/speckit-plan` → `/speckit-tasks` →（可选 `/speckit-analyze`）→ `/speckit-implement`，产物提交到 `specs/`；`/speckit-taskstoissues` 可把 tasks 直接发布为 GitHub issues。
+新功能优先走 speckit 流程：`/speckit-specify` →（可选 `/speckit-clarify`）→ `/speckit-plan` → `/speckit-tasks` →（可选 `/speckit-analyze`）→ `/speckit-implement`，产物提交到 `specs/`；已审批的 spec 可用 `scripts/spec-start.sh` 从不可变 revision 启动自主规划并生成可调度的 issues（用法与决策政策见 [docs/SPEC_START.md](docs/SPEC_START.md)）。
 
 日常小任务不必走 spec，直接 issue + TDD。
 
