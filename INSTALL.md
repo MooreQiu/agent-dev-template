@@ -43,7 +43,7 @@ cd /tmp/adt
 gh label list                                  # 含 ready-for-agent、agent-claimed、agent-failed、blocked、trivial
 gh secret list -R <owner/name>                 # 含 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN
 gh variable list -R <owner/name>               # 含 AGENT_MODEL_DEFAULT、AGENT_MODEL_FLASH（AGENT_EFFORT_DEFAULT 可选）
-gh workflow list -R <owner/name>               # Claude Dispatch / Agent Sweep / PR Review 均 active
+gh workflow list -R <owner/name>               # Agent Dispatch / Agent Sweep / PR Review 均 active
 ```
 
 **冒烟测试**（真实闭环）：
@@ -74,6 +74,22 @@ gh variable set AGENT_MODEL_FLASH -R <owner/name> -b "<模型>"
 # 可选：推理 effort 默认值（low/medium/high/xhigh/max；不设 = CLI 默认）
 gh variable set AGENT_EFFORT_DEFAULT -R <owner/name> -b "<effort>"
 ```
+
+### 启用 @codex / @gemini / @opencode mention 派发（可选，issue #23）
+
+默认只有 `@claude` 可触发派发。放行其余 harness 需要（以 codex 为例）：
+
+```bash
+# 1. repo var：允许的 mention 名单（指派触发固定用第一个）
+gh variable set AGENT_HARNESSES -R <owner/name> -b "claude,codex"
+# 2. 凭证 secret：codex 用 CODEX_API_KEY（exec 专用）或 OPENAI_API_KEY；
+#    gemini 用 GEMINI_API_KEY；opencode 用 ANTHROPIC_API_KEY / OPENAI_API_KEY
+gh secret set CODEX_API_KEY -R <owner/name> -b "<key>"
+# 3. .agent/project.json 的 integrations 加入 "codex"（bootstrap-env.sh
+#    会按 agent_tooling.codex_cli 安装钉版 CLI；gemini/opencode 同理）
+```
+
+说明：一条评论只能 mention 一个 agent（多个不同 mention 判为歧义拒绝）；官方 `openai/codex-action` 集成也监听 `@codex`——两者共用时把 codex 留在 `AGENT_HARNESSES` 之外即可避免双派发。各 harness 的模型 var（`AGENT_MODEL_CODEX` / `AGENT_MODEL_GEMINI` / `AGENT_MODEL_OPENCODE`，不设 = CLI 默认）与 effort 支持范围见 README「多 harness 派发」。
 
 ### 模型/effort 优先级与评论覆盖（issue #9）
 

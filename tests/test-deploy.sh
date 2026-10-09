@@ -41,6 +41,7 @@ cat > "$MOCK_BIN/gh" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "$GH_LOG"
 case "\$*" in
+  *"repo clone"*) exit "\${GH_CLONE_RC:-0}" ;;
   *nameWithOwner*) echo "acme/fixture" ;;
   *defaultBranchRef*) echo "$MOCK_BRANCH" ;;
   *"/branches/"*"/protection"*) cat >> "$PROTECT_LOG" ;;
@@ -150,6 +151,37 @@ check "claude.yml resolves default branch dynamically" \
   sh -c 'grep -q "github.event.repository.default_branch" "$1"' sh "$WF/claude.yml"
 check "agent-sweep.yml resolves default branch dynamically" \
   sh -c 'grep -q "github.event.repository.default_branch" "$1"' sh "$WF/agent-sweep.yml"
+
+# --- AC (issue #57): deploy exit codes survive the cleanup trap --------------
+# Local mode leaves TMP empty, so a cleanup trap whose last command evaluates
+# false under `set -e` clobbers the intended exit status: a fully successful
+# local deploy must exit 0, and a failing run must keep ITS OWN nonzero code.
+echo "== deploy exit codes =="
+FIX="$TMP/rc-local"
+make_fixture "$FIX"
+( cd "$REPO_ROOT" && PATH="$MOCK_BIN:$PATH" ANTHROPIC_AUTH_TOKEN= \
+    bash deploy.sh "$FIX" ) > "$TMP/out-rc-local.txt" 2>&1
+local_rc=$?
+check "successful local deploy exits 0" \
+  sh -c 'test "$1" -eq 0' sh "$local_rc"
+
+FAILGIT="$TMP/failgit"
+mkdir -p "$FAILGIT"
+printf '#!/usr/bin/env bash\nexit 7\n' > "$FAILGIT/git"
+chmod +x "$FAILGIT/git"
+FIX="$TMP/rc-fail"
+make_fixture "$FIX"
+( cd "$REPO_ROOT" && PATH="$MOCK_BIN:$FAILGIT:$PATH" ANTHROPIC_AUTH_TOKEN= \
+    bash deploy.sh "$FIX" ) > "$TMP/out-rc-fail.txt" 2>&1
+fail_rc=$?
+check "failed local deploy preserves its own exit code" \
+  sh -c 'test "$1" -eq 7' sh "$fail_rc"
+
+( cd "$REPO_ROOT" && PATH="$MOCK_BIN:$PATH" GH_CLONE_RC=42 ANTHROPIC_AUTH_TOKEN= \
+    bash deploy.sh acme/ghost ) > "$TMP/out-rc-remote.txt" 2>&1
+remote_rc=$?
+check "failed remote deploy preserves its own exit code" \
+  sh -c 'test "$1" -eq 42' sh "$remote_rc"
 
 echo
 if [ "$failures" -gt 0 ]; then
