@@ -14,3 +14,4 @@ coverage/
 .agent/runs/
 .ci-evidence/
 .agent-work/
+specs/*/convergence/evidence/
