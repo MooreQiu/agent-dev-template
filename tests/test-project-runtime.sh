@@ -66,7 +66,7 @@ set -u
 echo "node $*" >> "$MOCK_LOG"
 [ "${1:-}" = "--version" ] || exit 0
 [ "${NODE_RC:-0}" -eq 0 ] || exit "${NODE_RC}"
-echo "${NODE_VERSION_OUT:-v20.9.0}"
+echo "${NODE_VERSION_OUT:-v22.11.0}"
 EOF
 
 cat > "$MOCK_BIN/gh" <<'EOF'

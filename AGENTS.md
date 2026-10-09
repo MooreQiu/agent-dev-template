@@ -4,7 +4,7 @@
 
 ## 项目信息（单一事实源：`.agent/project.json`）
 
-- 语言/框架：bash 脚本 + Node 20 工具链
+- 语言/框架：bash 脚本 + Node 22 工具链
 - 构建：未配置
 - 测试（只跑相关的）：`npm test`
 - Lint / 类型检查：未配置

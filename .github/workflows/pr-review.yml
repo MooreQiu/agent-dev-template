@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Bootstrap environment (pinned tooling, fail-fast checks)
         run: bash scripts/bootstrap-env.sh
