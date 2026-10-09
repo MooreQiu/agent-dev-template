@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Fetch the independent review verdict for a PR and act on it.
 #
-# The verdict is delivered as a PR comment from the reviewer workflow bot,
-# whose login differs per API: REST issue comments report
-# "github-actions[bot]" while GraphQL (gh pr view) reports "github-actions".
-# We query REST and match the exact bot login, so only the reviewer bot's
-# latest comment qualifies.
+# The verdict is delivered as a PR comment from the reviewer workflow bot.
+# The exact login depends on the API and on the auth the workflow resolved
+# via scripts/app-auth.sh (docs/GITHUB_APP_SETUP.md):
+#   REST + GITHUB_TOKEN fallback -> "github-actions[bot]"
+#     (GraphQL would report the suffix-less "github-actions")
+#   REST + GitHub App            -> "mooreqiu-agent-dev-bot[bot]"
+# We query REST and match an EXACT allowlist of these two reviewer logins —
+# never a loose "[bot]" suffix, so an unknown app's comment cannot drive a
+# merge. Only an allowlisted bot's latest comment qualifies; everything else
+# (humans, unknown bots) is ignored and a missing verdict fails closed.
 #
 # Usage:
 #   scripts/review-verdict.sh <pr-number> [--print]
@@ -44,7 +49,7 @@ BODY=$(printf '%s' "$COMMENTS" | node -e '
   process.stdin.on("data", (c) => chunks.push(c));
   process.stdin.on("end", () => {
     const comments = JSON.parse(chunks.join("") || "[]")
-      .filter((c) => c.user && c.user.login === "github-actions[bot]")
+      .filter((c) => c.user && ["github-actions[bot]", "mooreqiu-agent-dev-bot[bot]"].includes(c.user.login))
       .sort((a, b) => a.id - b.id);
     const last = comments[comments.length - 1];
     if (last) process.stdout.write(last.body);
@@ -52,7 +57,7 @@ BODY=$(printf '%s' "$COMMENTS" | node -e '
 ')
 
 if [ -z "$BODY" ]; then
-  echo "review verdict missing: no github-actions[bot] comment found on PR #$PR" >&2
+  echo "review verdict missing: no reviewer bot (github-actions[bot] or mooreqiu-agent-dev-bot[bot]) comment found on PR #$PR" >&2
   exit 3
 fi
 

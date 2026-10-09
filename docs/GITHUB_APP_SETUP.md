@@ -24,19 +24,20 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 | 字段 | 值 |
 |---|---|
-| GitHub App name | `agent-dev-bot`（**必须**精确使用此名，原因见下；仍需全站唯一） |
+| GitHub App name | `mooreqiu-agent-dev-bot`（**必须**精确使用此名，原因见下；仍需全站唯一） |
 | Homepage URL | 仓库地址即可 |
 | Expire user authorization tokens | 默认即可 |
 | Webhook → Active | **取消勾选**（不需要） |
 | Where can this GitHub App be installed | Only on this account（推荐） |
 
-> **为什么 App 名字必须是精确的 `agent-dev-bot`**：`scripts/review-verdict.sh`
-> 用**精确 allowlist**（`github-actions[bot]`、`agent-dev-bot[bot]`）识别审计 bot 的
+> **为什么 App 名字必须是精确的 `mooreqiu-agent-dev-bot`**：`scripts/review-verdict.sh`
+> 用**精确 allowlist**（`github-actions[bot]`、`mooreqiu-agent-dev-bot[bot]`）识别审计 bot 的
 > verdict 评论，APPROVE 才会自动合并。App 的 bot 登录名由 App 名字生成
 > （slug + `[bot]`），改成任何其他名字，verdict 评论的作者就变成 `<你的名字>[bot]`，
 > allowlist 匹配不到——每个 PR 都停在 `review verdict missing`，自动合并静默失效，
 > smoke test 第 5 步也会失败且不提示原因。allowlist 保持精确匹配是有意为之
-> （未知 App 的评论永远不能驱动合并），所以请直接把 App 命名为 `agent-dev-bot`。
+> （未知 App 的评论永远不能驱动合并），所以请直接把 App 命名为
+> `mooreqiu-agent-dev-bot`。
 
 **Repository permissions（最小集）**：
 
@@ -62,7 +63,7 @@ GraphQL: refusing to allow a GitHub App to create or update workflow
 > 合不动"，容易被误判成审计没通过——其实是 App 权限问题（见故障排查表）。
 
 App 已创建但漏了这条权限时补授权：GitHub → Settings → Developer settings →
-GitHub Apps → `agent-dev-bot` → **Permissions & events** → Repository
+GitHub Apps → `mooreqiu-agent-dev-bot` → **Permissions & events** → Repository
 permissions → Workflows 设为 Read and write → **Save changes**（改完如安装页
 提示重新授权，按提示确认即可）。
 
@@ -82,7 +83,7 @@ App 页面底部 **Private keys → Generate a private key**，下载 `.pem` 文
 
 ```bash
 gh secret set APP_ID          -b "<App 页面的 App ID，纯数字>"
-gh secret set APP_PRIVATE_KEY < ~/Downloads/agent-dev-bot.2026-10-09.private-key.pem
+gh secret set APP_PRIVATE_KEY < ~/Downloads/mooreqiu-agent-dev-bot.2026-10-09.private-key.pem
 # 可选：显式指定 installation ID，跳过每次 API 自动发现
 gh secret set APP_INSTALLATION_ID -b "12345678"
 ```
@@ -101,7 +102,7 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 
 1. **人类评论触发派发**：用自己的账号在 issue 评论 `@claude 处理这个 issue`。
    - 期望：Claude Dispatch 正常运行；agent 建分支、开 PR。
-   - 验证 PR 作者身份是 `agent-dev-bot[bot]`（而非 `github-actions[bot]`）。
+   - 验证 PR 作者身份是 `mooreqiu-agent-dev-bot[bot]`（而非 `github-actions[bot]`）。
 2. **PR Review 自动触发、无需批准**：PR 打开后。
    - 期望：PR Review workflow 立即运行（状态不是 `action_required`）。
    - 验证：`gh run list --workflow pr-review.yml --limit 3` 无 approval 待批；

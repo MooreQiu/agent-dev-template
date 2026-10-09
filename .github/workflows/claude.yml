@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false # git push 认证统一走 scripts/app-auth.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -40,12 +41,38 @@ jobs:
       - name: Bootstrap environment (pinned tooling, fail-fast checks)
         run: bash scripts/bootstrap-env.sh
 
+      # 只放行人类发起的触发：bot 的 ack 评论 / 自动指派等一律拒绝，
+      # 防止改用 GitHub App 认证后评论递归触发派发（issue #13）
+      - name: Filter dispatch triggers
+        id: filter
+        env:
+          # repo 变量只经 ${{ vars.* }} 上下文注入，不进 process env，
+          # 必须显式映射给脚本（issue #13）
+          AGENT_ALLOWED_ACTORS: ${{ vars.AGENT_ALLOWED_ACTORS }}
+        run: |
+          if scripts/dispatch-filter.sh; then
+            echo "result=allow" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=deny" >> "$GITHUB_OUTPUT"
+          fi
+
+      # GitHub App 短时效 installation token：gh 走 GH_TOKEN，git push 走
+      # credential helper；未配置 App 时回退 GITHUB_TOKEN 并给出明确提示
+      - name: Resolve auth (GitHub App installation token)
+        if: steps.filter.outputs.result == 'allow'
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
+        run: scripts/app-auth.sh
+
       - name: Configure git
         run: |
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
       - name: Resolve model (trivial label -> flash)
+        if: steps.filter.outputs.result == 'allow'
         run: |
           DEFAULT="${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}"
           FLASH="${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}"
@@ -62,6 +89,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Dispatch to Claude
+        if: steps.filter.outputs.result == 'allow'
         run: |
           ACTOR="${{ github.actor }}"
           DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"

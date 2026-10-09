@@ -34,6 +34,7 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
+          persist-credentials: false # 合并等操作认证统一走 scripts/app-auth.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -41,6 +42,15 @@ jobs:
 
       - name: Bootstrap environment (pinned tooling, fail-fast checks)
         run: bash scripts/bootstrap-env.sh
+
+      # GitHub App 短时效 installation token（issue #13）：评论/合并走 App 身份，
+      # 避免 GITHUB_TOKEN 事件触发审批门；未配置时回退 GITHUB_TOKEN
+      - name: Resolve auth (GitHub App installation token)
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
+        run: scripts/app-auth.sh
 
       - name: Configure git
         run: |

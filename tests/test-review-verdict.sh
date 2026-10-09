@@ -10,6 +10,12 @@
 #
 # The fix lives in scripts/review-verdict.sh (REST lookup, exact bot login)
 # and is exercised here with a mocked gh CLI (no network access).
+#
+# Extended for issue #13: when the workflow resolves GitHub App auth
+# (scripts/app-auth.sh, docs/GITHUB_APP_SETUP.md) the verdict comment comes
+# from the App bot "mooreqiu-agent-dev-bot[bot]". The lookup accepts an EXACT allowlist
+# of the two reviewer logins; unknown bots and humans stay ignored so no
+# third-party app comment can ever drive a merge.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -114,6 +120,25 @@ cat > "$TMP/malformed.json" <<'EOF'
 ]
 EOF
 
+# The workflow resolved GitHub App auth, so its comments come from the App
+# bot "mooreqiu-agent-dev-bot[bot]". Decoys: human, unknown app bot, and an earlier
+# start notice from the GITHUB_TOKEN fallback login.
+cat > "$TMP/app-bot.json" <<'EOF'
+[
+  {"id": 504, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: APPROVE — verified with the App installation token"},
+  {"id": 503, "user": {"login": "MooreQiu", "type": "User"}, "body": "VERDICT: APPROVE from a human"},
+  {"id": 502, "user": {"login": "other-app[bot]", "type": "Bot"}, "body": "VERDICT: APPROVE from another app"},
+  {"id": 501, "user": {"login": "github-actions[bot]", "type": "Bot"}, "body": "🤖 独立审计开始（peer review，与作者零上下文共享）。"}
+]
+EOF
+
+# The App bot can also deliver REQUEST_CHANGES; it must drive the label path.
+printf '%s\n' \
+'[' \
+'  {"id": 602, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: REQUEST_CHANGES — blocking:\n- merge dropped the fix"},' \
+'  {"id": 601, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "🤖 独立审计开始（peer review，与作者零上下文共享）。"}' \
+']' > "$TMP/app-bot-reject.json"
+
 # --- AC: APPROVE path returns the verdict body and merges ------------------
 echo "== APPROVE =="
 run_script "$TMP/approve.json" 42
@@ -142,6 +167,28 @@ check "reports the verdict as missing" \
 check "does not merge" sh -c '! grep -q "pr merge" "$1"' sh "$GH_LOG"
 check "does not label (no agent-failed on missing verdict)" \
   sh -c '! grep -q "pr edit" "$1"' sh "$GH_LOG"
+
+# --- AC: the GitHub App bot is an accepted reviewer --------------------------
+echo "== GitHub App bot verdicts =="
+run_script "$TMP/app-bot.json" 42
+
+check "exit 0 on App bot APPROVE" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "returns the App bot verdict body" \
+  sh -c 'grep -Fq "VERDICT: APPROVE — verified with the App installation token" "$1"' sh "$TMP/out.txt"
+check "merges on the App bot verdict" \
+  sh -c 'grep -q "pr merge 42" "$1" && grep -q -- "--delete-branch" "$1"' sh "$GH_LOG"
+check "earlier fallback-bot comment not mistaken for the verdict" \
+  sh -c '! grep -Fq "独立审计开始" "$1"' sh "$TMP/out.txt"
+check "unknown app bot still ignored in the lookup" \
+  sh -c '! grep -Fq "from another app" "$1"' sh "$TMP/out.txt"
+
+run_script "$TMP/app-bot-reject.json" 42
+
+check "exit 0 on App bot REQUEST_CHANGES" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "labels agent-failed on App bot REQUEST_CHANGES" \
+  sh -c 'grep -q "pr edit 42 --add-label agent-failed" "$1"' sh "$GH_LOG"
+check "does not merge an App-rejected PR" \
+  sh -c '! grep -q "pr merge" "$1"' sh "$GH_LOG"
 
 # --- AC: empty comment list is reported as missing, loudly -----------------
 echo "== empty comment list =="
@@ -190,6 +237,10 @@ check "pr-review.yml auto-merge step runs review-verdict.sh" \
   sh -c 'grep -q "scripts/review-verdict.sh" "$1"' sh "$WF"
 check "old GraphQL lookup removed from pr-review.yml" \
   sh -c '! grep -q "gh pr view.*--json comments" "$1"' sh "$WF"
+check "verdict lookup allowlists the App bot login exactly" \
+  sh -c 'grep -Fq "mooreqiu-agent-dev-bot[bot]" "$1"' sh "$SCRIPT"
+check "verdict lookup never loose-matches every [bot] author" \
+  sh -c '! grep -q "endswith" "$1"' sh "$SCRIPT"
 check "npm test runs the full suite" \
   sh -c 'grep -q "tests/run-all.sh" "$1"' sh "$REPO_ROOT/package.json"
 
