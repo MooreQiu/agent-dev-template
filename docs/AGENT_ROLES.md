@@ -67,10 +67,10 @@ bash scripts/bootstrap-env.sh            # 校验配置 → 认证/非交互校�
 bash scripts/bootstrap-env.sh --check    # 只校验配置与前提，不安装
 ```
 
-引导全程 fail-fast：配置缺命令/占位符、node 版本不一致、模型认证缺失、gh 未认证、依赖或工具安装失败、集成缺失——一律立即报错退出，绝不挂起等交互输入（`GIT_TERMINAL_PROMPT=0`、`GH_PROMPT_DISABLED=1`，CI 中写入 `GITHUB_ENV`）。三个工作流（claude / agent-sweep / pr-review）统一通过 `scripts/bootstrap-env.sh` 引导，不再手写未钉住的安装命令。
+引导全程 fail-fast：配置缺命令/占位符、node 版本不一致、模型认证缺失、gh 未认证、依赖或工具安装失败、集成缺失——一律立即报错退出，绝不挂起等交互输入（`GIT_TERMINAL_PROMPT=0`、`GH_PROMPT_DISABLED=1`，CI 中写入 `GITHUB_ENV`）。五个工作流（claude / agent-sweep / pr-review / spec-start / spec-converge）统一通过 `scripts/bootstrap-env.sh` 引导，不再手写未钉住的安装命令；spec 类工作流在引导后仍保留各自的角色预检（spec-start 预检 specify、spec-converge 预检 implement）。
 
 **接入具体项目的设置路径**：1) 编辑 `.agent/project.json` 填真实命令与锁文件；2) `verify-project` 校验（角色 `verify` 也会自动校验并拒绝无效配置）；3) 工作流保持 `scripts/bootstrap-env.sh` 引导步骤即可复现环境。
 
 ## 测试
 
-验收测试在 `tests/test_agent_bootstrap.sh` 与 `tests/test-project-runtime.sh`（`npm test` 会一并运行），前者覆盖：角色选择、缺文件/缺技能/坏元数据/脚本不可执行、错误工作目录、缺工具启动失败、记录与秘密不泄露、双 harness 同步与漂移、项目专属技能接入；后者覆盖：项目配置校验（缺命令/占位符/未钉版本/未知集成/坏锁文件）、角色预检联动、可复现引导（lockfile 语义、钉住 CLI、认证与非交互 fail-fast）、非 Node 项目、安装与命令执行失败。
+验收测试在 `tests/test_agent_bootstrap.sh` 与 `tests/test-project-runtime.sh`（`npm test` 会一并运行），前者覆盖：角色选择、缺文件/缺技能/坏元数据/脚本不可执行、错误工作目录、缺工具启动失败、记录与秘密不泄露、双 harness 同步与漂移、项目专属技能接入；后者覆盖：项目配置校验（缺命令/占位符/未钉版本/未知集成/坏锁文件）、角色预检联动、可复现引导（lockfile 语义、钉住 CLI、认证与非交互 fail-fast）、非 Node 项目、安装与命令执行失败、五个工作流（含 spec-start / spec-converge）统一走共享引导且无未钉安装；spec 工作流侧的接线（共享引导先于角色预检、失败不遮蔽、保留 setup-node）另由 `tests/test-spec-start.sh` / `tests/test-spec-converge.sh` 校验。
