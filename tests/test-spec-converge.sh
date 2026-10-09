@@ -58,6 +58,11 @@ if [ "$1" = api ]; then
   for a in "$@"; do
     if [ "$a" = "-X" ]; then exit 0; fi # mutation recorded above only
   done
+  # Emulate the one --jq filter the entrypoint uses against the fixture.
+  if printf '%s' "$*" | grep -q "select(.title"; then
+    sed -n "s/.*\"title\":\"$MILESTONE_TITLE\",\"number\":\([0-9]*\).*/\1/p" "$MS_JSON"
+    exit 0
+  fi
   cat "$MS_JSON"; exit 0
 fi
 if [ "$1" = issue ] && [ "$2" = list ]; then
@@ -120,6 +125,7 @@ EOF
 export GATE_LOG GATE_RC
 
 FEATURE="016-demo"
+export MILESTONE_TITLE="$FEATURE"
 
 # --- fixture repository with an approved, fully scheduled feature -----------
 make_fixture() { # make_fixture <dir>
@@ -337,7 +343,7 @@ printf '21\t[%s/G001] Signed export artifact is not implemented (attempt 1)\tOPE
 gap_findings G001 REQ2 missing "Signed export artifact is not implemented"
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
 check "open remediation work keeps the queue undrained instead of duplicating" \
-  sh -c '[ "$1" = 3 ] && [ "$(cat "$2")" = 0 ]' sh "$STATUS" "$COUNTER"
+  sh -c '[ "$1" = 3 ] && [ ! -s "$2" ]' sh "$STATUS" "$COUNTER"
 restore_fixture
 
 # ============================================================================
@@ -485,7 +491,7 @@ if [ -f "$DOC" ]; then
   check "doc defines the convergence budget and blocked semantics" \
     sh -c 'grep -qi "budget" "$1" && grep -qi "blocked" "$1"' sh "$DOC"
   check "doc preserves the approved spec and plan" \
-    sh -c 'grep -qi "immutable\|preserve" "$1"' sh "$DOC"
+    sh -c 'grep -q "绝不修改" "$1"' sh "$DOC"
 fi
 check "AGENTS.md points at the convergence entrypoint documentation" \
   sh -c 'grep -q "docs/SPEC_CONVERGE.md" "$1"' sh "$REPO_ROOT/AGENTS.md"
