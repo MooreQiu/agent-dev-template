@@ -200,7 +200,7 @@ check "INSTALL.md documents the project setup path" \
   grep -Fq '.agent/project.json' "$REPO_ROOT/INSTALL.md"
 
 echo "== workflow wiring: pinned bootstrap, merge decider intact"
-for wf in claude.yml agent-sweep.yml pr-review.yml; do
+for wf in claude.yml agent-sweep.yml pr-review.yml spec-start.yml spec-converge.yml; do
   check "$wf bootstraps via scripts/bootstrap-env.sh" \
     grep -Fq "scripts/bootstrap-env.sh" "$REPO_ROOT/.github/workflows/$wf"
   check "$wf has no unpinned claude-code install" \
