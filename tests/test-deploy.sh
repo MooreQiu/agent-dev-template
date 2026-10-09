@@ -138,8 +138,13 @@ check "auto-merge enabled" \
 echo "== workflow merge and branch configuration =="
 WF="$REPO_ROOT/.github/workflows"
 
-check "pr-review merges via squash" sh -c 'grep -q -- " --squash" "$1"' sh "$WF/pr-review.yml"
-check "pr-review avoids merge commits" sh -c '! grep -q " --merge " "$1"' sh "$WF/pr-review.yml"
+# The auto-merge call may live in the workflow or in scripts/ it delegates to
+# (it moved to scripts/review-verdict.sh), so both surfaces are asserted:
+# grepping only the workflow made the guard pass vacuously after the move.
+check "pr-review merges via squash" \
+  sh -c 'grep -rq -- " --squash" "$1/pr-review.yml" "$2"' sh "$WF" "$REPO_ROOT/scripts"
+check "pr-review avoids merge commits" \
+  sh -c '! grep -rq -- " --merge " "$1/pr-review.yml" "$2"' sh "$WF" "$REPO_ROOT/scripts"
 check "workflows do not hardcode --base main" sh -c '! grep -rq -- "--base main" "$1"' sh "$WF"
 check "claude.yml resolves default branch dynamically" \
   sh -c 'grep -q "github.event.repository.default_branch" "$1"' sh "$WF/claude.yml"
