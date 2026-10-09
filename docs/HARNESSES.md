@@ -36,30 +36,34 @@ AGENT=opencode scripts/agent.sh "按 AGENTS.md 处理 issue #5"   # provider 无
 AGENT=gemini   scripts/agent.sh "按 AGENTS.md 处理 issue #5"   # 需 GEMINI_API_KEY
 ```
 
-## CI 里换 harness（等价替换 claude.yml 的安装+执行两步）
+## CI 里换 harness
+
+派发层已内置四 harness mention 路由（README「多 harness 派发」）：`AGENT_HARNESSES` var 放行名单，`scripts/agent.sh` 生成各 CLI 的非交互调用，`scripts/bootstrap-env.sh` 按 `.agent/project.json` 的 integrations + `agent_tooling` 钉版安装。手动/本地等价形式（按受支持版本验证）：
 
 **Codex**
 ```yaml
-- run: npm i -g @openai/codex
-- run: codex exec --sandbox workspace-write --ephemeral "处理 issue #N，按 AGENTS.md"
-  env: { CODEX_API_KEY: "${{ secrets.CODEX_API_KEY }}" }
+- run: npm i -g @openai/codex@0.162.0
+- run: codex exec --ephemeral --sandbox workspace-write --model <模型> -c model_reasoning_effort=<low|medium|high> "处理 issue #N，按 AGENTS.md"
+  env: { CODEX_API_KEY: "${{ secrets.CODEX_API_KEY }}" }   # exec 专用 key
 ```
 
 **OpenCode**
 ```yaml
-- run: npm i -g opencode-ai
-- run: opencode run --auto "处理 issue #N，按 AGENTS.md"
-  env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
+- run: npm i -g opencode-ai@1.18.35
+- run: opencode run --auto --model <provider/model> "处理 issue #N，按 AGENTS.md"
+  env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }   # 或 OPENAI_API_KEY；自定义 provider 经仓库 opencode 配置
 ```
 
 **Gemini CLI**
 ```yaml
-- run: npm i -g @google/gemini-cli
-- run: gemini --yolo -p "处理 issue #N，按 AGENTS.md"
+- run: npm i -g @google/gemini-cli@0.63.0
+- run: gemini --approval-mode=yolo --skip-trust --model <模型> -p "处理 issue #N，按 AGENTS.md"
   env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
 ```
 
-OpenCode 还有官方 GitHub 集成：`opencode github install` 自动生成 Actions workflow。
+说明：`--yolo` 已被 gemini-cli 废弃，用 `--approval-mode=yolo`（`--skip-trust` 跳过交互式目录信任确认）；`codex exec --ephemeral` 不落会话文件，`--full-auto` 已废弃，显式写 `--sandbox workspace-write`。Claude Code 钉版 `@anthropic-ai/claude-code@2.1.295`。
+
+OpenCode 还有官方 GitHub 集成：`opencode github install` 自动生成 Actions workflow（与我们的 @opencode mention 二选一即可）。
 
 ## Spec Kit 多集成共存
 

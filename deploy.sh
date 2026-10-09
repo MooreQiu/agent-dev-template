@@ -32,7 +32,10 @@ done
 SRC=$(cd "$(dirname "$0")" && pwd)
 TMP=""
 
-cleanup() { [ -n "$TMP" ] && rm -rf "$TMP"; return 0; }
+# Keep the last command of the trap status-neutral: under `set -e` a false
+# `[ -n "$TMP" ] && ...` in local mode (TMP empty) would clobber the intended
+# exit code of the whole script.
+cleanup() { [ -z "$TMP" ] || rm -rf "$TMP"; }
 trap cleanup EXIT
 
 if [ -d "$TARGET" ]; then

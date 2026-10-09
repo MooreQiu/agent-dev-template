@@ -83,7 +83,18 @@ is_placeholder() { # is_placeholder <value> -- true when unresolved template tex
 }
 
 SUPPORTED_LOCKFILES="package-lock.json yarn.lock pnpm-lock.yaml"
-SUPPORTED_INTEGRATIONS="claude"
+SUPPORTED_INTEGRATIONS="claude codex gemini opencode"
+
+# integration name -> pinned-tooling key in agent_tooling (issue #23:
+# every enabled integration must pin its CLI exactly)
+integration_pin_key() { # integration_pin_key <integration>
+  case "$1" in
+    claude) printf 'claude_code' ;;
+    codex) printf 'codex_cli' ;;
+    gemini) printf 'gemini_cli' ;;
+    opencode) printf 'opencode_cli' ;;
+  esac
+}
 
 validate_project_config() { # prints ERROR lines to stderr; rc 1 on failure
   [ -f "$PROJECT_FILE" ] || {
@@ -164,8 +175,16 @@ validate_project_config() { # prints ERROR lines to stderr; rc 1 on failure
         printf 'ERROR: unsupported integration '%s' (supported: %s)\n' \
           "$i" "$SUPPORTED_INTEGRATIONS" >&2
         errors=$((errors + 1))
+        continue
         ;;
     esac
+    pin_key="$(integration_pin_key "$i")"
+    pin="$(project_scalar "$tooling" "$pin_key")"
+    if ! printf '%s\n' "$pin" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
+      printf 'ERROR: agent_tooling.%s must be an exact pinned version for integration '%s', not '%s'\n' \
+        "$pin_key" "$i" "$pin" >&2
+      errors=$((errors + 1))
+    fi
   done
 
   if [ -z "$auth_envs" ]; then
@@ -203,8 +222,11 @@ cmd_verify_project() {
     [ -n "$val" ] || val="(not configured)"
     printf '  %s: %s\n' "$key" "$val"
   done
-  printf '  agent tooling: @anthropic-ai/claude-code@%s\n' "$(project_scalar "$tooling" claude_code)"
   printf '  integrations:%s\n' "$integrations"
+  for i in $integrations; do
+    printf '  agent tooling: %s pinned as agent_tooling.%s=%s\n' \
+      "$i" "$(integration_pin_key "$i")" "$(project_scalar "$tooling" "$(integration_pin_key "$i")")"
+  done
   printf '  model auth env:%s\n' "$auth_envs"
 }
 

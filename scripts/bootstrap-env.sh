@@ -21,6 +21,26 @@ REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 PROJECT_FILE="$REPO_ROOT/.agent/project.json"
 PREFLIGHT="$SELF_DIR/agent-preflight.sh"
 
+# integration name -> npm package (binaries share the integration name).
+# Kept in sync with agent-preflight.sh pin keys and docs/HARNESSES.md.
+integration_package() { # integration_package <integration>
+  case "$1" in
+    claude) printf '@anthropic-ai/claude-code' ;;
+    codex) printf '@openai/codex' ;;
+    gemini) printf '@google/gemini-cli' ;;
+    opencode) printf 'opencode-ai' ;;
+  esac
+}
+
+integration_pin_key() { # integration_pin_key <integration>
+  case "$1" in
+    claude) printf 'claude_code' ;;
+    codex) printf 'codex_cli' ;;
+    gemini) printf 'gemini_cli' ;;
+    opencode) printf 'opencode_cli' ;;
+  esac
+}
+
 usage() {
   printf '%s\n' \
     "Usage: scripts/bootstrap-env.sh [--check]" \
@@ -78,7 +98,6 @@ rt_name="$(project_scalar "$runtime" name)"
 rt_version="$(project_scalar "$runtime" version)"
 rt_lockfile="$(project_scalar "$runtime" lockfile)"
 cfg_install="$(project_scalar "$commands" install)"
-pin="$(project_scalar "$tooling" claude_code)"
 
 # 2. runtime prerequisites
 if [ "$rt_name" = "node" ]; then
@@ -88,12 +107,19 @@ if [ "$rt_name" = "node" ]; then
   done
   node_version="$(node --version 2>/dev/null)" \
     || die 1 "runtime check failed: 'node --version' exited nonzero"
-  case "$node_version" in
-    "v$rt_version".* | "v$rt_version") ;;
-    *)
-      die 1 "runtime version mismatch: .agent/project.json requires node $rt_version, found $node_version; align the environment or update the configuration"
+  # The pin is a floor, not an exact version: the pinned agent tooling only
+  # declares a minimum engine (claude-code requires node >= 22), so machines
+  # with a newer default runtime must bootstrap fine while older ones fail.
+  node_major="${node_version#v}"; node_major="${node_major%%.*}"
+  pin_major="${rt_version%%.*}"
+  case "$node_major" in
+    '' | *[!0-9]*)
+      die 1 "runtime check failed: unparsable node version '$node_version'"
       ;;
   esac
+  if [ "$node_major" -lt "$pin_major" ]; then
+    die 1 "runtime version mismatch: .agent/project.json requires node >= $rt_version, found $node_version; align the environment or update the configuration"
+  fi
 fi
 
 # 3. model authentication (presence only -- values are never printed)
@@ -139,17 +165,18 @@ if [ "$CHECK" -eq 0 ]; then
 
   command -v npm >/dev/null 2>&1 \
     || die 1 "required tool npm not found in PATH (needed for agent tooling)"
-  printf 'installing pinned agent tooling: @anthropic-ai/claude-code@%s\n' "$pin"
-  npm install -g "@anthropic-ai/claude-code@$pin" \
-    || die 1 "failed to install pinned agent tooling @anthropic-ai/claude-code@$pin"
+  # Install the pinned CLI for every enabled integration (issue #23).
+  for i in $integrations; do
+    pkg="$(integration_package "$i")"
+    ipin="$(project_scalar "$tooling" "$(integration_pin_key "$i")")"
+    printf 'installing pinned agent tooling: %s@%s\n' "$pkg" "$ipin"
+    npm install -g "$pkg@$ipin" \
+      || die 1 "failed to install pinned agent tooling $pkg@$ipin"
+  done
 
   for i in $integrations; do
-    case "$i" in
-      claude)
-        command -v claude >/dev/null 2>&1 \
-          || die 1 "required integration 'claude' missing from PATH after bootstrap"
-        ;;
-    esac
+    command -v "$i" >/dev/null 2>&1 \
+      || die 1 "required integration '$i' missing from PATH after bootstrap"
   done
 fi
 
