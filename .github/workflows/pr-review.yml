@@ -99,8 +99,8 @@ jobs:
             echo "protected=true" >> "$GITHUB_OUTPUT"
             printf 'merge-control path changes: %s\n' "$hits"
             gh pr comment "$N" --body "🔒 本 PR 修改了审计/合并控制路径（pr-review.yml、
-scripts/ci-gate.sh、scripts/app-auth.sh、
-scripts/review-verdict.sh）。按 issue #19，本运行的策略与编排一律取 base 修订，这些改动不生效；自动合并已禁用，请人工审查后合并。" || true
+            scripts/ci-gate.sh、scripts/app-auth.sh、
+            scripts/review-verdict.sh）。按 issue #19，本运行的策略与编排一律取 base 修订，这些改动不生效；自动合并已禁用，请人工审查后合并。" || true
           else
             echo "protected=false" >> "$GITHUB_OUTPUT"
           fi
