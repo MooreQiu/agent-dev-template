@@ -546,6 +546,18 @@ check "spec-converge workflow exists" test -f "$WF"
 if [ -f "$WF" ]; then
   check "workflow is human-triggered with spec and revision inputs" \
     sh -c 'grep -q "workflow_dispatch" "$1" && grep -q "spec:" "$1" && grep -q "revision:" "$1"' sh "$WF"
+  check "workflow bootstraps via the shared pinned bootstrap" \
+    sh -c 'grep -q "scripts/bootstrap-env.sh" "$1"' sh "$WF"
+  check "workflow keeps no unpinned claude-code install" \
+    sh -c '! grep -Fq "npm install -g @anthropic-ai/claude-code" "$1"' sh "$WF"
+  check "workflow bootstraps before the role preflight (fail fast)" \
+    sh -c 'b=$(grep -n "scripts/bootstrap-env.sh" "$1" | sed -n 1p | cut -d: -f1)
+           p=$(grep -n "agent-preflight.sh verify implement" "$1" | sed -n 1p | cut -d: -f1)
+           [ -n "$b" ] && [ -n "$p" ] && [ "$b" -lt "$p" ]' sh "$WF"
+  check "workflow does not mask bootstrap or preflight failures" \
+    sh -c '! grep -q "continue-on-error" "$1"' sh "$WF"
+  check "workflow keeps setup-node for the configured node runtime" \
+    sh -c 'grep -q "node-version: \"20\"" "$1"' sh "$WF"
   check "workflow prefights the implement role" \
     sh -c 'grep -q "agent-preflight.sh verify implement" "$1"' sh "$WF"
   check "precheck step delegates to the outcome adapter with an id" \
