@@ -44,8 +44,27 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 |---|---|---|
 | Contents | Read & write | 分支推送、合并 PR |
 | Pull requests | Read & write | 建/评/合并 PR |
+| Workflows | Read & write | 合并/推送触及 `.github/workflows/*` 的改动（见下方故障模式） |
 | Issues | Read & write | 认领、评论、打标签 |
 | Metadata | Read-only | 强制自带 |
+
+> **Workflows 权限不能省**：本仓库 agent 的日常产出就包括修改
+> `.github/workflows/*`（调 CI、给新 workflow 接线）。App 缺 Workflows 权限时，
+> bot 合并任何触及 workflow 文件的 PR 都会被 GitHub 直接拒绝：
+
+```
+GraphQL: refusing to allow a GitHub App to create or update workflow
+`.github/workflows/agent-sweep.yml` without `workflows` permission
+(mergePullRequest)
+```
+
+> 不触及 workflow 文件的 PR 仍能正常合并，所以症状是"有的 PR 合得动、有的
+> 合不动"，容易被误判成审计没通过——其实是 App 权限问题（见故障排查表）。
+
+App 已创建但漏了这条权限时补授权：GitHub → Settings → Developer settings →
+GitHub Apps → `agent-dev-bot` → **Permissions & events** → Repository
+permissions → Workflows 设为 Read and write → **Save changes**（改完如安装页
+提示重新授权，按提示确认即可）。
 
 不需要 Organization / User permissions。
 
@@ -93,6 +112,12 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 4. **fix push 再次触发 review**：在 PR 上用 `@claude` 请求修改，agent push 新提交。
    - 期望：PR Review 因 `synchronize` 重新运行，同样无需人工批准。
 5. **审计合并**：verdict 为 `VERDICT: APPROVE` 时 PR 自动合并、删除分支。
+6. **Workflows 权限冒烟**：开一个触及 `.github/workflows/*` 的 PR（agent 的日常
+   产出多半就是这类），等审计 `VERDICT: APPROVE` 后由 bot 合并。
+   - 期望：合并成功，不再报 `refusing to allow a GitHub App ... without
+     `workflows` permission`。
+   - 注意：第 1–5 步全过也验证不到这项权限——不触及 workflow 文件的 PR 不需要
+     Workflows 授权，本步才覆盖（缺失时的症状即上方故障模式）。
 
 任何一步出现 `action_required`，说明该事件仍是 `GITHUB_TOKEN` 身份发起——检查
 对应 workflow 是否漏加 `scripts/app-auth.sh`，或 checkout 是否漏了
@@ -106,6 +131,7 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 | `installation lookup failed` | App 未安装到本仓库，或用了错误的 API 地址 |
 | `failed to sign the JWT` | `APP_PRIVATE_KEY` 不是完整 PEM（复制时丢了换行，直接 `gh secret set < 文件`） |
 | `installation token exchange failed` | JWT 时钟偏差或私钥与 App ID 不匹配；重下私钥重配 |
+| bot 合并 workflow PR 被拒（`without workflows permission`） | App 缺 Workflows 权限；按第 1 步的补授权路径把 Workflows 设为 Read and write 后重试 |
 
 本地测试（无需网络，API 已 mock）：
 

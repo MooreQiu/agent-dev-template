@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Acceptance tests for issue #13: GitHub App authentication for agent workflows.
+# Also carries the runbook-content pins added by issue #32 (PR #34).
 #
 # Criteria covered:
 #   - installation token generation path (API mocked, no network)
@@ -9,6 +10,8 @@
 #   - JWT signing with a throwaway RSA key
 #   - workflows call scripts/app-auth.sh and persist no checkout credentials
 #   - setup runbook exists and is linked from README
+#   - runbook documents the Workflows permission, its failure mode,
+#     the grant path, and the smoke-test step covering it (issue #32)
 #
 # Run: bash tests/test-app-auth.sh
 set -u
@@ -276,6 +279,11 @@ grep -Fq 'agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
     "scripts/review-verdict.sh does not allowlist agent-dev-bot[bot]"
 
 # --- AC: setup runbook + smoke test documentation ---
+contains() { # contains <fixed string> <description>
+  grep -Fq -- "$1" "$DOCS" \
+    && pass "$2" \
+    || fail "$2" "not found in docs/GITHUB_APP_SETUP.md: $1"
+}
 [ -f "$DOCS" ] \
   && pass "docs/GITHUB_APP_SETUP.md exists" \
   || fail "docs/GITHUB_APP_SETUP.md exists" "file not found"
@@ -294,6 +302,20 @@ if [ -f "$DOCS" ]; then
     && pass "runbook explains why the App name is fixed" \
     || fail "runbook explains why the App name is fixed" \
       "no mention of the verdict allowlist dependency"
+
+  # --- AC from issue #32: Workflows permission pinned in the runbook ---
+  grep -Eq '\|[[:space:]]*Workflows[[:space:]]*\|[[:space:]]*Read & write' "$DOCS" \
+    && pass "permission table lists Workflows: Read & write" \
+    || fail "permission table lists Workflows: Read & write" \
+      "expected a '| Workflows | Read & write | ... |' table row"
+  contains 'refusing to allow a GitHub App to create or update workflow' \
+    "failure mode quotes GitHub's merge refusal error"
+  contains 'without `workflows` permission' \
+    "failure mode names the missing workflows permission"
+  contains 'Workflows 设为 Read and write' \
+    "runbook gives the App settings path to grant Workflows"
+  contains '触及 `.github/workflows/*` 的 PR' \
+    "smoke test merges a workflow-touching PR to validate Workflows"
 fi
 grep -q 'GITHUB_APP_SETUP' "$REPO_ROOT/README.md" \
   && pass "README links the GitHub App runbook" \

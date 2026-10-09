@@ -150,7 +150,10 @@ check "earlier bot comment not mistaken for the verdict" \
   sh -c '! grep -Fq "独立审计开始" "$1"' sh "$TMP/out.txt"
 check "human/other-bot comments ignored in the lookup" \
   sh -c '! grep -Fq "from a human" "$1" && ! grep -Fq "from another app" "$1"' sh "$TMP/out.txt"
-check "merges the PR" sh -c 'grep -q "pr merge 42" "$1" && grep -q -- "--delete-branch" "$1"' sh "$GH_LOG"
+# Squash is pinned because setup.sh requires linear history: a merge commit
+# would be rejected by branch protection on every deployed repo.
+check "merges the PR via squash" \
+  sh -c 'grep -q "pr merge 42" "$1" && grep -q -- "--squash" "$1" && grep -q -- "--delete-branch" "$1" && ! grep -q -- " --merge " "$1"' sh "$GH_LOG"
 check "does not label an approved PR" sh -c '! grep -q "pr edit" "$1"' sh "$GH_LOG"
 
 # --- AC: human / suffix-less / other-bot authors never satisfy the lookup --

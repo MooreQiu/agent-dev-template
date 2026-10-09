@@ -18,7 +18,7 @@
 #   --print  only print the verdict body; never merge or label
 #
 # Behavior:
-#   VERDICT: APPROVE (line start)         -> gh pr merge --merge --delete-branch
+#   VERDICT: APPROVE (line start)         -> gh pr merge --squash --delete-branch
 #   VERDICT: REQUEST_CHANGES (line start) -> gh pr edit --add-label agent-failed
 #   no bot comment / no verdict line      -> non-zero exit, no side effects
 set -u
@@ -68,8 +68,13 @@ if [ "$PRINT_ONLY" -eq 1 ]; then
 fi
 
 if printf '%s\n' "$BODY" | grep -q '^VERDICT: APPROVE'; then
-  if ! gh pr merge "$PR" --merge --delete-branch 2>/dev/null; then
-    gh pr merge "$PR" --merge --delete-branch ||
+  # Merge controller: enforce the same gate as CI when branch protection is
+  # unavailable (CI_GATE_EVIDENCE is exported by the pr-review gate step).
+  [ -z "${CI_GATE_EVIDENCE:-}" ] || bash "$(dirname "$0")/ci-gate.sh" check --evidence-dir "$CI_GATE_EVIDENCE" || { echo "::error::CI quality gate evidence rejected for PR #$PR; not merging" >&2; exit 6; }
+  # Squash, never a merge commit: setup.sh enforces required_linear_history
+  # on deployed repos and would reject merge commits.
+  if ! gh pr merge "$PR" --squash --delete-branch 2>/dev/null; then
+    gh pr merge "$PR" --squash --delete-branch ||
       { echo "::error::merge of PR #$PR failed" >&2; exit 5; }
   fi
   echo "✅ 审计通过，已合并"

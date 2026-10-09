@@ -34,6 +34,10 @@ done
 [ "$ok" = 1 ] || { echo "❌ gh 认证不可用（排除瞬时网络故障后仍失败），请运行: gh auth login -h github.com"; exit 1; }
 echo "  ✓ 认证正常"
 
+say "解析默认分支"
+DEFAULT_BRANCH=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+echo "  ✓ ${DEFAULT_BRANCH}"
+
 say "创建/更新 labels"
 label() {
   gh label create "$1" --repo "$REPO" --color "$2" --description "$3" >/dev/null 2>&1 \
@@ -94,11 +98,11 @@ if [ "$WITH_PROJECT" = 1 ]; then
 fi
 
 if [ "$SKIP_PROTECTION" = 0 ]; then
-  say "保护 main 分支（要求 PR、禁止 force push）"
-  if gh api -X PUT "repos/$REPO/branches/main/protection" --input - <<'EOF' >/dev/null 2>&1
+  say "保护 ${DEFAULT_BRANCH} 分支（要求 PR、禁止 force push、线性历史）"
+  if gh api -X PUT "repos/$REPO/branches/${DEFAULT_BRANCH}/protection" --input - <<'EOF' >/dev/null 2>&1
 {
   "required_pull_request_reviews": { "dismiss_stale_reviews": false, "require_code_owner_reviews": false },
-  "required_status_checks": { "strict": true, "contexts": [] },
+  "required_status_checks": { "strict": true, "contexts": ["CI Gate / quality-gate"] },
   "enforce_admins": false,
   "restrictions": null,
   "allow_force_pushes": false,
@@ -110,6 +114,13 @@ EOF
     echo "  ✓ branch protection 已启用"
   else
     echo "  ⚠️ 失败：GitHub Free 的私有仓库不支持 branch protection（公开仓库或付费计划可用）"
+  fi
+
+  say "配置合并方式（squash，兼容线性历史要求）"
+  if gh repo edit "$REPO" --allow-squash-merge >/dev/null 2>&1; then
+    echo "  ✓ squash merge 已允许（pr-review.yml 以 --squash 合并，不产生 merge commit）"
+  else
+    echo "  ⚠️ 启用 squash merge 失败：请确认仓库设置允许 squash，否则线性历史下无法合并"
   fi
 
   say "启用 auto-merge"

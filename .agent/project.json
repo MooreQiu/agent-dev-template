@@ -1,0 +1,21 @@
+{
+  "runtime": {
+    "name": "node",
+    "version": "20",
+    "lockfile": ""
+  },
+  "commands": {
+    "install": "npm install",
+    "build": "",
+    "test": "npm test",
+    "lint": "",
+    "typecheck": ""
+  },
+  "agent_tooling": {
+    "claude_code": "2.1.295"
+  },
+  "integrations": ["claude"],
+  "model_auth": {
+    "any_of_env": ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+  }
+}
