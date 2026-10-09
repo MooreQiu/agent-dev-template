@@ -107,12 +107,19 @@ if [ "$rt_name" = "node" ]; then
   done
   node_version="$(node --version 2>/dev/null)" \
     || die 1 "runtime check failed: 'node --version' exited nonzero"
-  case "$node_version" in
-    "v$rt_version".* | "v$rt_version") ;;
-    *)
-      die 1 "runtime version mismatch: .agent/project.json requires node $rt_version, found $node_version; align the environment or update the configuration"
+  # The pin is a floor, not an exact version: the pinned agent tooling only
+  # declares a minimum engine (claude-code requires node >= 22), so machines
+  # with a newer default runtime must bootstrap fine while older ones fail.
+  node_major="${node_version#v}"; node_major="${node_major%%.*}"
+  pin_major="${rt_version%%.*}"
+  case "$node_major" in
+    '' | *[!0-9]*)
+      die 1 "runtime check failed: unparsable node version '$node_version'"
       ;;
   esac
+  if [ "$node_major" -lt "$pin_major" ]; then
+    die 1 "runtime version mismatch: .agent/project.json requires node >= $rt_version, found $node_version; align the environment or update the configuration"
+  fi
 fi
 
 # 3. model authentication (presence only -- values are never printed)

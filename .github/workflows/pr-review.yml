@@ -64,9 +64,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The trusted control plane decides the runtime pin (issue #19): it is
+      # read from the base-SHA checkout at the workspace root -- never from
+      # the reviewed/ copy -- so the runner provisions exactly the node
+      # version the trusted scripts/bootstrap-env.sh enforces, whichever
+      # side bumps the pin first.
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ steps.node_pin.outputs.version }}
 
       - name: Bootstrap environment (pinned tooling, fail-fast checks)
         run: bash scripts/bootstrap-env.sh

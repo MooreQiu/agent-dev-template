@@ -1,8 +1,8 @@
 {
   "runtime": {
     "name": "node",
-    "version": "20",
-    "lockfile": ""
+    "version": "22",
+    "lockfile": "package-lock.json"
   },
   "commands": {
     "install": "npm install",
