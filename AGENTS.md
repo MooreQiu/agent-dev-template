@@ -29,9 +29,13 @@
 | `ready-for-agent` | 已就绪待认领（工作队列） |
 | `agent-claimed` | agent 已认领（锁；由 agent-claim.sh 统一协议维护，租约过期自动回收） |
 | `agent-failed` | agent 处理失败，已释放回队列 |
-| `blocked` | 有阻塞，勿认领 |
+| `agent-paused` | 人工暂停：worker 拒绝启动/阶段间优雅停止并保留可恢复状态；移除标签即恢复 |
+| `agent-cancelled` | 人工取消：worker 拒绝启动，直到人工清除标签 |
+| `blocked` | 有阻塞，勿认领（预算耗尽时由 agent-budget.sh 自动打上并附 summary 评论） |
 | `trivial` | 碎任务，CI 自动切 flash 快速模型 |
 | `p0`–`p3` | 优先级，p0 最高（p0 阻塞其他一切） |
+
+**运行预算与状态**（issue #22）：自主运行受 `.agent/budgets.json` 约束（重试/修复/收敛/时长/步数，配置非法一律 fail-closed），认领后即持久计数 attempts，崩溃循环不会无限重试；执行阶段、PR、最近失败等持久状态在 `refs/agent-status/<key>`，用 `scripts/agent-budget.sh show/summary <key>` 查看；终态阻塞只在 issue 上贴仓库原生 summary，无外部通知。详见 [docs/BUDGETS.md](docs/BUDGETS.md)。
 
 ## 规格驱动（Spec Kit）
 
