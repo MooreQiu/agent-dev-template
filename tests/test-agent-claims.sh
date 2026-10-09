@@ -45,6 +45,9 @@ seed_origin() { # seed_origin <name>
   d="$WORK/$1"
   mkdir -p "$d"
   git init -q --bare "$d/origin.git"
+  # Pin the bare HEAD to main regardless of the runner's init.defaultBranch
+  # (CI images default to master; a dangling HEAD yields empty clones).
+  git -C "$d/origin.git" symbolic-ref HEAD refs/heads/main
   git init -q "$d/seed"
   printf 'fixture %s\n' "$1" > "$d/seed/README"
   git -C "$d/seed" add -A

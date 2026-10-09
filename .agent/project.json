@@ -7,7 +7,7 @@
   "commands": {
     "install": "npm install",
     "build": "",
-    "test": "bash tests/run-diag.sh",
+    "test": "npm test",
     "lint": "",
     "typecheck": ""
   },

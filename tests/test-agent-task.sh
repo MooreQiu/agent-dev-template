@@ -131,6 +131,9 @@ make_fixture() { # make_fixture <name>
   d="$WORK/$1"
   mkdir -p "$d/origin" "$d/src/scripts" "$d/src/tests" "$d/src/.agent"
   git init -q --bare "$d/origin/origin.git"
+  # Pin the bare HEAD to main regardless of the runner's init.defaultBranch
+  # (CI images default to master; a dangling HEAD yields empty clones).
+  git -C "$d/origin/origin.git" symbolic-ref HEAD refs/heads/main
   cp "$CLAIM" "$d/src/scripts/agent-claim.sh"
   cp "$TASK" "$d/src/scripts/agent-task.sh"
   cat > "$d/src/tests/run-all.sh" <<'RUN'
