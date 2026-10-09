@@ -43,14 +43,15 @@ EOF
 chmod +x "$MOCK_BIN/gh"
 
 # Target fixture: a local repo with one customized component (AGENTS.md),
-# one component identical to the template (docs/HARNESSES.md), and everything
+# one component identical to the template (the whole docs/ directory, since
+# deploy.sh copies and compares components as whole items), and everything
 # else missing.
 FIX="$TMP/target"
-mkdir -p "$FIX/docs"
+mkdir -p "$FIX"
 git init -q "$FIX"
 git -C "$FIX" symbolic-ref HEAD refs/heads/trunk
 printf '# my customized agents file\n' > "$FIX/AGENTS.md"
-cp "$REPO_ROOT/docs/HARNESSES.md" "$FIX/docs/HARNESSES.md"
+cp -R "$REPO_ROOT/docs" "$FIX/docs"
 git -C "$FIX" add -A
 git -C "$FIX" commit -q -m "init"
 COMMITS_BEFORE=$(git -C "$FIX" rev-list --count HEAD)
