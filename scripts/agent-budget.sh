@@ -114,7 +114,15 @@ limit_value() { # limit_value <name> -> prints validated value
   val=""
   if [ -f "$file" ]; then
     val="$(sed -n "s/.*\"$name\": *\([0-9][0-9]*\).*/\1/p" "$file" | sed -n 1p)"
-    if [ -z "$val" ] && grep -Fq "\"$name\":" "$file"; then
+    if [ -n "$val" ]; then
+      # A value like 2.5 or 1e3 must fail closed, not truncate to 2 or 1:
+      # after the integer only JSON delimiters may follow on that line.
+      rest="$(sed -n "s/.*\"$name\": *[0-9][0-9]*//p" "$file" | sed -n 1p | sed 's/^[[:space:]]*//')"
+      case "$rest" in
+        ''|,*|}*) ;;
+        *) die "$file declares '$name' but it is not a positive integer (got '$val$rest'); refusing to run unbounded" ;;
+      esac
+    elif grep -Fq "\"$name\":" "$file"; then
       die "$file declares '$name' but it is not a positive integer (got '$(grep -Fo "\"$name\":" "$file" | sed -n 1p)...'); refusing to run unbounded"
     fi
   fi
