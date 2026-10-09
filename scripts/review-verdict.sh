@@ -1,87 +1,268 @@
 #!/usr/bin/env bash
-# Fetch the independent review verdict for a PR and act on it.
+# Structured review verdicts and merge authorization (issue #19; supersedes
+# the issue #28/#13 comment-lookup contract).
 #
-# The verdict is delivered as a PR comment from the reviewer workflow bot.
-# The exact login depends on the API and on the auth the workflow resolved
-# via scripts/app-auth.sh (docs/GITHUB_APP_SETUP.md):
-#   REST + GITHUB_TOKEN fallback -> "github-actions[bot]"
-#     (GraphQL would report the suffix-less "github-actions")
-#   REST + GitHub App            -> "mooreqiu-agent-dev-bot[bot]"
-# We query REST and match an EXACT allowlist of these two reviewer logins —
-# never a loose "[bot]" suffix, so an unknown app's comment cannot drive a
-# merge. Only an allowlisted bot's latest comment qualifies; everything else
-# (humans, unknown bots) is ignored and a missing verdict fails closed.
+# The independent reviewer's report is DATA, not authority. The trusted
+# workflow steps distill it into a verdict artifact ("write") bound to the
+# PR number, the exact reviewed head SHA, the identity of the run that
+# performed the review, and a digest of the CI gate evidence. The merge
+# decider ("merge") re-validates all of that against live PR state right
+# before merging. PR comments -- including the reviewer bots' (issue #13:
+# github-actions[bot] / mooreqiu-agent-dev-bot[bot], whichever identity
+# scripts/app-auth.sh resolved) -- are display-only and never authorize a
+# merge.
+#
+# Artifact (JSON, schema 1): schema, pr, verdict, head_sha, run_id,
+# run_attempt, created_at, report, evidence{dir, gate_digest}.
+# gate_digest = sha256 over gate.json + "\n" + test-first.json in the
+# evidence dir, binding the verdict to the exact deterministic results.
+#
+# "merge" fails closed on: missing/malformed/inconsistent artifacts, a
+# non-Actions context (implementation agents never merge), a run-id mismatch
+# (artifacts cannot cross workflow runs), a live head different from the
+# reviewed head (stale approval), and missing/substituted/rejected gate
+# evidence. Only a fully valid APPROVE merges (squash only, matching the
+# required linear history enforced by setup.sh); REQUEST_CHANGES requeues
+# the PR via the agent-failed label.
 #
 # Usage:
-#   scripts/review-verdict.sh <pr-number> [--print]
+#   scripts/review-verdict.sh write <pr> --reviewer-output FILE --head-sha SHA
+#                                  [--artifact FILE] [--evidence-dir DIR]
+#   scripts/review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
+#                                  [--gate-target DIR]
 #
-#   --print  only print the verdict body; never merge or label
+#   --evidence-dir defaults to $CI_GATE_EVIDENCE; --artifact defaults to
+#   <evidence-dir>/review-verdict.json; --gate-target forwards the reviewed
+#   working tree to ci-gate.sh check.
 #
-# Behavior:
-#   VERDICT: APPROVE (line start)         -> gh pr merge --squash --delete-branch
-#   VERDICT: REQUEST_CHANGES (line start) -> gh pr edit --add-label agent-failed
-#   no bot comment / no verdict line      -> non-zero exit, no side effects
+# Exit codes:
+#   0 ok (a valid REQUEST_CHANGES label counts as ok)
+#   2 usage / invalid arguments
+#   3 verdict artifact missing, malformed or inconsistent
+#   4 reviewer output carries no usable VERDICT line (write)
+#   5 merge command failed
+#   6 CI gate evidence missing, tampered with or rejected
+#   7 PR head unresolvable or changed since the review
+#   8 run identity mismatch (no run context / different run)
+#   9 mutation requested outside GitHub Actions
 set -u
 
+die() { # die <exit-code> <message...>
+  echo "review-verdict: $2" >&2
+  exit "$1"
+}
+
 usage() {
-  echo "usage: $0 <pr-number> [--print]" >&2
+  cat >&2 <<'EOF'
+Usage:
+  review-verdict.sh write <pr> --reviewer-output FILE --head-sha SHA
+                        [--artifact FILE] [--evidence-dir DIR]
+  review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
+                        [--gate-target DIR]
+EOF
   exit 2
 }
 
-[ $# -ge 1 ] && [ $# -le 2 ] || usage
-PR="$1"
+[ $# -ge 2 ] || usage
+MODE="$1"
+PR="$2"
+case "$MODE" in
+  write | merge) ;;
+  *) usage ;;
+esac
+shift 2
 case "$PR" in '' | *[!0-9]*) usage ;; esac
-PRINT_ONLY=0
-if [ "${2:-}" = "--print" ]; then
-  PRINT_ONLY=1
-elif [ $# -eq 2 ]; then
-  usage
+
+REVIEWER_OUT=""
+HEAD_SHA_IN=""
+ARTIFACT=""
+EVIDENCE="${CI_GATE_EVIDENCE:-}"
+GATE_TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --reviewer-output) [ $# -ge 2 ] || usage; REVIEWER_OUT="$2"; shift 2 ;;
+    --head-sha) [ $# -ge 2 ] || usage; HEAD_SHA_IN="$2"; shift 2 ;;
+    --artifact) [ $# -ge 2 ] || usage; ARTIFACT="$2"; shift 2 ;;
+    --evidence-dir) [ $# -ge 2 ] || usage; EVIDENCE="$2"; shift 2 ;;
+    --gate-target) [ $# -ge 2 ] || usage; GATE_TARGET="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+if [ "$MODE" = write ]; then
+  { [ -n "$REVIEWER_OUT" ] && [ -n "$HEAD_SHA_IN" ]; } || usage
+else
+  { [ -z "$REVIEWER_OUT" ] && [ -z "$HEAD_SHA_IN" ]; } || usage
 fi
 
-REPO="${GITHUB_REPOSITORY:-}"
-if [ -z "$REPO" ]; then
-  REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || exit 2
-fi
+is_sha() { # is_sha <value> -- exactly 40 lowercase hex characters
+  case "$1" in
+    *[!0-9a-f]*) return 1 ;;
+    ????????????????????????????????????????) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-COMMENTS=$(gh api "repos/$REPO/issues/$PR/comments")
-BODY=$(printf '%s' "$COMMENTS" | node -e '
-  const chunks = [];
-  process.stdin.on("data", (c) => chunks.push(c));
-  process.stdin.on("end", () => {
-    const comments = JSON.parse(chunks.join("") || "[]")
-      .filter((c) => c.user && ["github-actions[bot]", "mooreqiu-agent-dev-bot[bot]"].includes(c.user.login))
-      .sort((a, b) => a.id - b.id);
-    const last = comments[comments.length - 1];
-    if (last) process.stdout.write(last.body);
-  });
-')
+gate_digest() { # gate_digest <evidence-dir> -- sha256 over the gate evidence
+  { cat "$1/gate.json" && printf '\n' && cat "$1/test-first.json"; } 2>/dev/null |
+    openssl dgst -sha256 -r | sed 's/[^0-9a-f].*//'
+}
 
-if [ -z "$BODY" ]; then
-  echo "review verdict missing: no reviewer bot (github-actions[bot] or mooreqiu-agent-dev-bot[bot]) comment found on PR #$PR" >&2
-  exit 3
-fi
+resolve_evidence() {
+  [ -n "$EVIDENCE" ] ||
+    die 6 "no CI gate evidence: set CI_GATE_EVIDENCE or pass --evidence-dir (issue #19: no evidence, no merge)"
+  { [ -f "$EVIDENCE/gate.json" ] && [ -f "$EVIDENCE/test-first.json" ]; } ||
+    die 6 "gate evidence incomplete under $EVIDENCE: need gate.json and test-first.json"
+  DIGEST="$(gate_digest "$EVIDENCE")"
+  [ -n "$DIGEST" ] || die 6 "cannot digest the gate evidence under $EVIDENCE"
+}
 
-echo "最新审计结论: $BODY"
+# ------------------------------------------------------------- write mode ---
+if [ "$MODE" = write ]; then
+  [ -f "$REVIEWER_OUT" ] || die 4 "reviewer output not found: $REVIEWER_OUT"
+  [ -s "$REVIEWER_OUT" ] || die 4 "reviewer output is empty: $REVIEWER_OUT"
+  is_sha "$HEAD_SHA_IN" ||
+    die 2 "--head-sha must be a 40-character lowercase hex SHA (got: $HEAD_SHA_IN)"
 
-if [ "$PRINT_ONLY" -eq 1 ]; then
+  RUN_ID="${GITHUB_RUN_ID:-}"
+  [ -n "$RUN_ID" ] || die 8 "write requires GITHUB_RUN_ID (run identity binding)"
+
+  # Only a line-start "VERDICT: <VERDICT>" counts; indented or quoted
+  # look-alikes are prose, and disagreeing verdict lines are ambiguous --
+  # both fail closed instead of guessing.
+  VERDICT=""
+  conflict=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "VERDICT: APPROVE"*) v=APPROVE ;;
+      "VERDICT: REQUEST_CHANGES"*) v=REQUEST_CHANGES ;;
+      *) continue ;;
+    esac
+    [ -n "$VERDICT" ] || VERDICT="$v"
+    [ "$VERDICT" = "$v" ] || conflict=1
+  done < "$REVIEWER_OUT"
+  [ -n "$VERDICT" ] ||
+    die 4 "no line starting with 'VERDICT: APPROVE' or 'VERDICT: REQUEST_CHANGES' in $REVIEWER_OUT"
+  [ "$conflict" -eq 0 ] ||
+    die 4 "conflicting VERDICT lines in $REVIEWER_OUT; refusing to pick one"
+
+  resolve_evidence
+
+  [ -n "$ARTIFACT" ] || ARTIFACT="$EVIDENCE/review-verdict.json"
+  node -e '
+    const fs = require("fs");
+    const artifact = {
+      schema: 1,
+      pr: Number(process.argv[2]),
+      verdict: process.argv[3],
+      head_sha: process.argv[4],
+      run_id: process.argv[5],
+      run_attempt: String(process.argv[6]),
+      created_at: process.argv[7],
+      report: fs.readFileSync(process.argv[1], "utf8"),
+      evidence: { dir: process.argv[8], gate_digest: process.argv[9] },
+    };
+    fs.writeFileSync(process.argv[10], JSON.stringify(artifact, null, 2) + "\n");
+  ' "$REVIEWER_OUT" "$PR" "$VERDICT" "$HEAD_SHA_IN" "$RUN_ID" \
+    "${GITHUB_RUN_ATTEMPT:-1}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$EVIDENCE" "$DIGEST" "$ARTIFACT" ||
+    die 3 "failed to write the verdict artifact to $ARTIFACT"
+  echo "verdict artifact: $ARTIFACT (PR #$PR, $VERDICT, head $HEAD_SHA_IN, run $RUN_ID)"
   exit 0
 fi
 
-if printf '%s\n' "$BODY" | grep -q '^VERDICT: APPROVE'; then
-  # Merge controller: enforce the same gate as CI when branch protection is
-  # unavailable (CI_GATE_EVIDENCE is exported by the pr-review gate step).
-  [ -z "${CI_GATE_EVIDENCE:-}" ] || bash "$(dirname "$0")/ci-gate.sh" check --evidence-dir "$CI_GATE_EVIDENCE" || { echo "::error::CI quality gate evidence rejected for PR #$PR; not merging" >&2; exit 6; }
+# ------------------------------------------------------------- merge mode ---
+[ -n "$ARTIFACT" ] || {
+  [ -n "$EVIDENCE" ] ||
+    die 3 "no artifact: pass --artifact, or --evidence-dir to use <evidence>/review-verdict.json"
+  ARTIFACT="$EVIDENCE/review-verdict.json"
+}
+
+FIELDS="$(node -e '
+  const fs = require("fs");
+  let a;
+  try { a = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+  catch (e) { process.exit(1); }
+  const schema = a && a.schema,
+    pr = a && a.pr,
+    verdict = a && a.verdict,
+    head = a && a.head_sha,
+    run = a && a.run_id,
+    digest = a && a.evidence && a.evidence.gate_digest;
+  if (schema !== 1) process.exit(1);
+  if (typeof pr !== "number" || typeof verdict !== "string" ||
+      typeof head !== "string" || typeof run !== "string" ||
+      typeof digest !== "string") process.exit(1);
+  process.stdout.write([pr, verdict, head, run, digest].join("\n") + "\n");
+' "$ARTIFACT" 2>/dev/null)" ||
+  die 3 "verdict artifact is missing or unreadable: $ARTIFACT"
+[ -n "$FIELDS" ] || die 3 "verdict artifact is malformed JSON or fails schema 1: $ARTIFACT"
+
+A_PR="$(printf '%s\n' "$FIELDS" | sed -n 1p)"
+A_VERDICT="$(printf '%s\n' "$FIELDS" | sed -n 2p)"
+A_HEAD="$(printf '%s\n' "$FIELDS" | sed -n 3p)"
+A_RUN="$(printf '%s\n' "$FIELDS" | sed -n 4p)"
+A_DIGEST="$(printf '%s\n' "$FIELDS" | sed -n 5p)"
+
+[ "$A_PR" = "$PR" ] || die 3 "verdict artifact is for PR #$A_PR but was invoked for PR #$PR"
+case "$A_VERDICT" in
+  APPROVE | REQUEST_CHANGES) ;;
+  *) die 3 "verdict artifact carries verdict '$A_VERDICT'; expected APPROVE or REQUEST_CHANGES" ;;
+esac
+is_sha "$A_HEAD" || die 3 "verdict artifact head_sha is malformed: $A_HEAD"
+
+# Implementation agents run this script locally too; only the review workflow
+# may mutate the PR (AC5: never merge independently).
+[ "${GITHUB_ACTIONS:-}" = "true" ] ||
+  die 9 "mutating PR #$PR is only allowed inside the GitHub Actions review workflow; implementation agents never merge"
+[ -n "${GITHUB_RUN_ID:-}" ] || die 9 "GITHUB_RUN_ID is not set; refusing to mutate PR #$PR"
+[ "$A_RUN" = "$GITHUB_RUN_ID" ] ||
+  die 8 "verdict artifact is from run $A_RUN, this is run $GITHUB_RUN_ID; stale run evidence is not merge authorization"
+
+REPO="${GITHUB_REPOSITORY:-}"
+if [ -z "$REPO" ]; then
+  REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) ||
+    die 7 "cannot resolve the repository to fetch the live head of PR #$PR"
+fi
+LIVE_HEAD="$(gh api "repos/$REPO/pulls/$PR" 2>/dev/null | node -e '
+  const chunks = [];
+  process.stdin.on("data", (c) => chunks.push(c));
+  process.stdin.on("end", () => {
+    try {
+      const pr = JSON.parse(chunks.join("") || "null");
+      const sha = pr && pr.head && pr.head.sha;
+      if (typeof sha !== "string" || !sha) process.exit(1);
+      process.stdout.write(sha);
+    } catch (e) { process.exit(1); }
+  });
+')" || true
+[ -n "$LIVE_HEAD" ] || die 7 "cannot resolve the live head of PR #$PR; failing closed"
+[ "$LIVE_HEAD" = "$A_HEAD" ] ||
+  die 7 "PR #$PR head changed since the review (reviewed $A_HEAD, live $LIVE_HEAD); the approval is stale"
+
+resolve_evidence
+[ "$DIGEST" = "$A_DIGEST" ] ||
+  die 6 "gate evidence under $EVIDENCE does not match the artifact digest; the evidence changed after the review"
+
+GATE_SCRIPT="$(dirname "$0")/ci-gate.sh"
+if [ -n "$GATE_TARGET" ]; then
+  bash "$GATE_SCRIPT" check --evidence-dir "$EVIDENCE" --target-dir "$GATE_TARGET" ||
+    die 6 "CI quality gate evidence rejected for PR #$PR (gate-target $GATE_TARGET); not merging"
+else
+  bash "$GATE_SCRIPT" check --evidence-dir "$EVIDENCE" ||
+    die 6 "CI quality gate evidence rejected for PR #$PR; not merging"
+fi
+
+if [ "$A_VERDICT" = "APPROVE" ]; then
   # Squash, never a merge commit: setup.sh enforces required_linear_history
   # on deployed repos and would reject merge commits.
   if ! gh pr merge "$PR" --squash --delete-branch 2>/dev/null; then
     gh pr merge "$PR" --squash --delete-branch ||
-      { echo "::error::merge of PR #$PR failed" >&2; exit 5; }
+      die 5 "merge of PR #$PR failed"
   fi
-  echo "✅ 审计通过，已合并"
-elif printf '%s\n' "$BODY" | grep -q '^VERDICT: REQUEST_CHANGES'; then
-  echo "⛔ 审计未通过（REQUEST_CHANGES），已标记等待处理"
-  gh pr edit "$PR" --add-label agent-failed || true
+  echo "approved verdict verified for head $A_HEAD (run $A_RUN); merged"
 else
-  echo "::error::review verdict on PR #$PR has no VERDICT: APPROVE/REQUEST_CHANGES line; not merging, not labeling" >&2
-  exit 4
+  echo "review rejected PR #$PR (head $A_HEAD); labeled agent-failed"
+  gh pr edit "$PR" --add-label agent-failed ||
+    echo "review-verdict: warning: could not label PR #$PR agent-failed" >&2
 fi

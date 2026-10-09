@@ -30,13 +30,13 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 | Webhook → Active | **取消勾选**（不需要） |
 | Where can this GitHub App be installed | Only on this account（推荐） |
 
-> **为什么 App 名字必须是精确的 `mooreqiu-agent-dev-bot`**：`scripts/review-verdict.sh`
-> 用**精确 allowlist**（`github-actions[bot]`、`mooreqiu-agent-dev-bot[bot]`）识别审计 bot 的
-> verdict 评论，APPROVE 才会自动合并。App 的 bot 登录名由 App 名字生成
-> （slug + `[bot]`），改成任何其他名字，verdict 评论的作者就变成 `<你的名字>[bot]`，
-> allowlist 匹配不到——每个 PR 都停在 `review verdict missing`，自动合并静默失效，
-> smoke test 第 5 步也会失败且不提示原因。allowlist 保持精确匹配是有意为之
-> （未知 App 的评论永远不能驱动合并），所以请直接把 App 命名为
+> **为什么 App 名字必须是精确的 `mooreqiu-agent-dev-bot`**：自 issue #19 起，合并授权来自
+> `scripts/review-verdict.sh` 的结构化 verdict artifact（绑定 PR 号、head SHA、run id 与门禁
+> 证据摘要），bot 评论只作展示；但评论/标签仍以 App 的 bot 身份发布，App 的 bot 登录名由
+> App 名字生成（slug + `[bot]`）。把 App 命名为精确的 `mooreqiu-agent-dev-bot`，审计评论才
+> 能与文档中记录的审计 bot 身份（`github-actions[bot]` / `mooreqiu-agent-dev-bot[bot]` 的
+> 精确 allowlist）对得上，避免与其他 App 的评论混淆；未来任何重新引入评论识别的检查也沿用
+> 同一 allowlist（未知 App 的评论永远不能驱动合并）。所以请直接把 App 命名为
 > `mooreqiu-agent-dev-bot`。
 
 **Repository permissions（最小集）**：
