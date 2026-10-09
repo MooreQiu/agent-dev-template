@@ -95,6 +95,12 @@ sed -n '1,10p' "$WORK/prep/prepare.out" >&2
   grep -Fq 'cannot attach worktree' "$WORK/prep/prepare.out" && exit 62
   grep -Fq 'not inside a git repository' "$WORK/prep/prepare.out" && exit 63
   grep -Fq 'ERROR' "$WORK/prep/prepare.out" && exit 64
+  grep -Fq 'unbound variable' "$WORK/prep/prepare.out" && exit 70
+  grep -Fq 'command not found' "$WORK/prep/prepare.out" && exit 71
+  grep -Fq 'No such file or directory' "$WORK/prep/prepare.out" && exit 72
+  grep -Fq 'Usage' "$WORK/prep/prepare.out" && exit 73
+  grep -Fq 'not found' "$WORK/prep/prepare.out" && exit 74
+  grep -Fq 'fatal' "$WORK/prep/prepare.out" && exit 75
   exit 65
 }
 grep -Fq 'ERROR' "$WORK/prep/prepare.out" && exit 52
