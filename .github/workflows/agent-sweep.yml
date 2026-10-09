@@ -73,6 +73,13 @@ jobs:
           # 周期 sweep 是恢复路径（issue #17）：选单统一走依赖+优先级调度器
           # （完整队列分页读取、p0 阻塞、依赖已合并才可选、已合并/在审不重选）。
           QUEUED=$(scripts/agent-schedule.sh list --limit "$LIMIT")
+          # Empty is an expected state (drained queue or any open p0
+          # holding it): a clean no-op, not a step failure. grep -c
+          # exits 1 on zero matches, which bash -e would treat as fatal.
+          if [ -z "$QUEUED" ]; then
+            echo "no eligible task; queue drained or held by a p0"
+            exit 0
+          fi
           COUNT=$(printf '%s\n' "$QUEUED" | grep -c .)
           echo "可调度任务: $COUNT"
           for N in $QUEUED; do
