@@ -96,8 +96,19 @@ EOF
 done
 chmod +x "$MOCK_BIN/"*
 
-FULL_PATH="$MOCK_BIN:$PATH"          # mocks shadow the real toolchain
-BARE_PATH="$MOCK_BIN:/usr/bin:/bin"  # no real gh/claude/node/npm leak in
+FULL_PATH="$MOCK_BIN:$PATH"  # mocks shadow the real toolchain
+
+# Hermetic PATH for the "missing tool" runs: the mocked toolchain plus a
+# directory holding ONLY the POSIX utilities bootstrap-env.sh and
+# agent-preflight.sh need, so an ambient gh/claude/node installed in the
+# system (e.g. /usr/bin) can never satisfy a "not found in PATH" check.
+HERMETIC_BIN="$WORK/hermetic-bin"
+mkdir -p "$HERMETIC_BIN"
+for t in bash cat dirname grep printenv sed touch tr; do
+  p="$(command -v "$t")" && ln -s "$p" "$HERMETIC_BIN/$t"
+done
+BARE_PATH="$MOCK_BIN:$HERMETIC_BIN"
+
 TOKEN="sk-bootstrap-sentinel-token"
 
 run_boot() { # run_boot <dir> [args...] -> rc in $RC, output in $OUT
@@ -140,22 +151,28 @@ log_line()  { grep -Fxq -- "$1" "$MOCK_LOG"; }
 log_has()   { grep -Fq -- "$1" "$MOCK_LOG"; }
 file_has()  { grep -Fq -- "$1" "$2"; }
 
-make_copy() { # make_copy <name> -- copy repo into $WORK/<name>, fresh git
+make_copy() { # make_copy <name> -- copy TRACKED files into $WORK/<name>, fresh git
   dst="$WORK/$1"
   mkdir -p "$dst"
-  cp -R "$REPO_ROOT/." "$dst/"
-  rm -rf "$dst/.git" "$dst/.agent/runs"
+  # Export the committed tree only: an untracked lockfile in the working
+  # tree (e.g. a stray package-lock.json) must not flip the lockfile
+  # auto-detection tests below.
+  git -C "$REPO_ROOT" archive HEAD | tar -x -C "$dst"
   git -C "$dst" init -q
   git -C "$dst" add -A
   git -C "$dst" -c user.name=Test -c user.email=test@example.com commit -qm "test fixture"
 }
 
 cfg() { # cfg <copy> <key> <value> -- replace a single-line string value
-  sed -i '' "s|\"$2\": \"[^\"]*\"|\"$2\": \"$3\"|" "$WORK/$1/$PROJECT"
+  cfg_file="$WORK/$1/$PROJECT"
+  sed "s|\"$2\": \"[^\"]*\"|\"$2\": \"$3\"|" "$cfg_file" > "$cfg_file.tmp" \
+    && mv "$cfg_file.tmp" "$cfg_file"
 }
 
 cfg_arr() { # cfg_arr <copy> <key> <array-literal> -- replace a JSON array
-  sed -i '' "s|\"$2\": \[.*\]|\"$2\": [$3]|" "$WORK/$1/$PROJECT"
+  cfg_file="$WORK/$1/$PROJECT"
+  sed "s|\"$2\": \[.*\]|\"$2\": [$3]|" "$cfg_file" > "$cfg_file.tmp" \
+    && mv "$cfg_file.tmp" "$cfg_file"
 }
 
 cfg_pin() { sed -n 's/.*"claude_code": "\([^"]*\)".*/\1/p' "$REPO_ROOT/$PROJECT" | sed -n 1p; }
@@ -316,12 +333,12 @@ unset GH_AUTH_RC
 
 mv "$MOCK_BIN/gh" "$WORK/gh.hidden"
 run_boot_bare "$COPY_A"
-if rc_bad && out_grep "gh"; then ok "missing gh tool fails fast"; else bad "missing gh tool fails fast"; fi
+if rc_bad && out_grep "gh not found in PATH"; then ok "missing gh tool fails fast"; else bad "missing gh tool fails fast"; fi
 mv "$WORK/gh.hidden" "$MOCK_BIN/gh"
 
 mv "$MOCK_BIN/claude" "$WORK/claude.hidden"
 run_boot_bare "$COPY_A"
-if rc_bad && out_grep "claude"; then ok "missing claude integration fails fast"; else bad "missing claude integration fails fast"; fi
+if rc_bad && out_grep "integration 'claude' missing from PATH"; then ok "missing claude integration fails fast"; else bad "missing claude integration fails fast"; fi
 mv "$WORK/claude.hidden" "$MOCK_BIN/claude"
 
 GITHUB_ENV="$WORK/ghenv"
@@ -381,7 +398,7 @@ unset NODE_RC
 
 mv "$MOCK_BIN/node" "$WORK/node.hidden"
 run_boot_bare "$COPY_A"
-if rc_bad && out_grep "node"; then ok "missing runtime tool fails fast"; else bad "missing runtime tool fails fast"; fi
+if rc_bad && out_grep "runtime tool node not found in PATH"; then ok "missing runtime tool fails fast"; else bad "missing runtime tool fails fast"; fi
 mv "$WORK/node.hidden" "$MOCK_BIN/node"
 
 echo
