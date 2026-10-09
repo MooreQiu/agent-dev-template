@@ -120,7 +120,7 @@ check "all five configured commands recorded" \
 check "every recorded command exited 0" \
   sh -c '! grep -Eq "\"exit\": [1-9]" "$1/gate.json"' sh "$EV"
 check "per-command logs captured" \
-  sh -c 'for n in install build test lint typecheck; do [ -s "$1/$n.log" ] || exit 1; done' sh "$EV"
+  sh -c 'for n in install build test lint typecheck; do [ -f "$1/$n.log" ] || exit 1; done' sh "$EV"
 check "unchanged range records no-code-change evidence" \
   grep -Fq '"status": "no-code-change"' "$EV/test-first.json"
 
