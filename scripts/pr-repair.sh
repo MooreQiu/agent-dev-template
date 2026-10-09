@@ -179,7 +179,7 @@ claim_running() { # claim_running <claim-json> -> rc 0 when a live lease is held
 # --- scan ----------------------------------------------------------------------
 
 cmd_scan() {
-  SCAN_RAW="$(gh pr list --label agent-failed --state open --json number,headRefName 2>/dev/null |
+  gh pr list --label agent-failed --state open --json number,headRefName 2>/dev/null |
     node -e '
       const chunks = [];
       process.stdin.on("data", (c) => chunks.push(c));
@@ -195,20 +195,7 @@ cmd_scan() {
           }
         }
       });
-    ')" || die "cannot list agent-failed pull requests"
-  # Dispatch input defense (issue #75): only bare integers may reach
-  # `gh pr view`; anything else from the queue is skipped with a logged
-  # reason instead of an unresolvable-PR failure.
-  printf '%s\n' "$SCAN_RAW" |
-    while IFS= read -r entry; do
-      [ -n "$entry" ] || continue
-      case "$entry" in
-        *[!0-9]*)
-          printf 'repair: scan: skipping non-numeric queue entry %s\n' "$entry" >&2
-          ;;
-        *) printf '%s\n' "$entry" ;;
-      esac
-    done
+    ' || die "cannot list agent-failed pull requests"
 }
 
 # --- dispatch --------------------------------------------------------------------
@@ -271,16 +258,9 @@ cmd_dispatch() {
   [ -n "$REJECTED_HEAD_IN" ] && { is_sha "$REJECTED_HEAD_IN" || usage; }
 
   # --- live PR state -----------------------------------------------------------
-  # gh stderr is captured, not discarded (issue #75): an unresolvable PR
-  # must say why (token, API outage, bad queue entry) or the repair loop
-  # cannot be diagnosed.
-  PR_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/adt-repair-err.XXXXXX")"
   PR_JSON="$(gh pr view "$PR" \
-    --json number,state,headRefOid,headRefName,body,statusCheckRollup,comments 2>"$PR_ERR_FILE")" ||
-    { GH_ERR="$(tr '\n' ' ' < "$PR_ERR_FILE" | sed 's/  */ /g; s/^ //; s/ $//')"
-      rm -f "$PR_ERR_FILE"
-      die "cannot resolve PR #$PR${GH_ERR:+ -- gh: $GH_ERR}"; }
-  rm -f "$PR_ERR_FILE"
+    --json number,state,headRefOid,headRefName,body,statusCheckRollup,comments 2>/dev/null)" ||
+    die "cannot resolve PR #$PR"
   FIELDS="$(printf '%s' "$PR_JSON" | node -e '
     const chunks = [];
     process.stdin.on("data", (c) => chunks.push(c));

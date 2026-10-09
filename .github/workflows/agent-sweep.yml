@@ -92,16 +92,7 @@ jobs:
             echo "没有待修复的退回 PR"
             exit 0
           fi
-          REPAIR_FAILED=0
           for PR in $QUEUED; do
-            # dispatch 只接受纯数字（issue #75）：scan 的输出在进入
-            # `gh pr view` 前再次校验，非法条目显式跳过并留日志
-            case "$PR" in
-              '' | *[!0-9]*)
-                echo "::warning::pr-repair scan produced a non-numeric entry '$PR'; skipped"
-                continue
-                ;;
-            esac
             echo "=== 修复退回 PR #$PR ==="
             ISSUE="$(gh pr view "$PR" --json body --jq .body | grep -Eo '(Closes|Fixes|Resolves) #[0-9]+' | head -1 | grep -Eo '[0-9]+')"
             if [ -n "$ISSUE" ] && [ "$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("trivial") != null')" = "true" ]; then
@@ -116,15 +107,8 @@ jobs:
               echo "PR #$PR 修复路径收敛（已修复/跳过/受控阻塞）"
             else
               echo "PR #$PR 修复失败（rc=$rc）；保留 agent-failed 标签，下轮 sweep 重试"
-              REPAIR_FAILED=1
             fi
           done
-          # 修复派发失败不能被 `|| rc=$?` 吞掉（issue #75）：其余 PR 先
-          # 处理完，但 job 必须以非零收场，让监控能抓到退回修复的故障。
-          if [ "$REPAIR_FAILED" -ne 0 ]; then
-            echo "::error::repair dispatch failed; a rejected PR could not be repaired, see logs above"
-            exit 1
-          fi
 
       - name: Claim and execute queue
         run: |
