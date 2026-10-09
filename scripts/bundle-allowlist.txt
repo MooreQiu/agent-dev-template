@@ -1,0 +1,51 @@
+# Explicit allowlist of everything the distribution bundle ships.
+# Consumed by scripts/build-bundle.sh; one path per line (file or directory,
+# relative to the repository root). Directories are included wholesale minus
+# the deny list enforced by build-bundle.sh. A listed path that is missing at
+# the packaged revision fails the build on purpose: the allowlist is the
+# contract of what consumers get, not a wish list.
+#
+# Rationale for what is NOT here (development-only, never shipped):
+# tests/, scripts/build-bundle.sh + this file, .specify/specs/ and all local
+# state, secrets, logs and generated artifacts -- see docs/BUNDLE.md.
+
+# Runtime instructions (read by every coding agent)
+AGENTS.md
+CLAUDE.md
+
+# Guides (installation, contributing, harness and role docs)
+README.md
+INSTALL.md
+CONTRIBUTING.md
+docs
+
+# License
+LICENSE
+
+# Package metadata (version is stamped at build time)
+package.json
+
+# Agent role & preflight configuration
+.agent
+
+# Skills and local slash commands (Claude + Codex copies)
+.claude/commands
+.claude/skills
+.codex/skills
+
+# Installers, dispatcher and runtime scripts
+setup.sh
+deploy.sh
+scripts
+
+# GitHub automation (workflows, issue/PR templates)
+.github/ISSUE_TEMPLATE
+.github/PULL_REQUEST_TEMPLATE.md
+.github/workflows
+
+# Spec Kit configuration, scripts and templates
+.specify
+
+# Repository hygiene config
+.gitattributes
+.gitignore
