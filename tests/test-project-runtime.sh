@@ -13,8 +13,10 @@
 #   - scripts/bootstrap-env.sh reproduces the environment: lockfile-driven
 #     dependency install, pinned Claude Code CLI, integration/auth and
 #     non-interactive verification, all failing fast instead of hanging
-#   - workflows bootstrap through the script; unpinned CLI installs are gone
-#     and the pr-review merge decider (scripts/review-verdict.sh) is intact
+#   - workflows bootstrap through the script; setup-node versions derive from
+#     the trusted .agent/project.json (no hardcoded literals); unpinned CLI
+#     installs are gone and the pr-review merge decider
+#     (scripts/review-verdict.sh) is intact
 #   - failures: dependency install, pinned tooling install, runtime command
 #     execution errors; non-Node projects use their configured install command
 #
@@ -213,12 +215,36 @@ for wf in claude.yml agent-sweep.yml pr-review.yml; do
   check "$wf has no unpinned claude-code install" \
     sh -c "! grep -Fq 'npm install -g @anthropic-ai/claude-code' '$REPO_ROOT/.github/workflows/$wf'"
 done
+# The runner must provision exactly what the trusted bootstrap accepts: every
+# workflow derives its setup-node version from .agent/project.json instead of
+# a hardcoded literal, so a pin bump (on main or in a PR) can never desync
+# provisioning from enforcement -- the PR that changes the pin passes its own
+# audit under the base revision's pin (issue #57).
 for wf in "$REPO_ROOT"/.github/workflows/*.yml; do
   grep -Fq 'node-version:' "$wf" || continue
-  nv="$(sed -n 's/.*node-version: "\([0-9]*\)".*/\1/p' "$wf" | sed -n 1p)"
-  check "$(basename "$wf") provisions node >= 22 (claude-code engine)" \
-    sh -c 'test "$1" -ge 22' sh "$nv"
+  w="$(basename "$wf")"
+  check "$w has no hardcoded node-version literal" \
+    sh -c '! grep -Eq "node-version: \"?[0-9]" "$1"' sh "$wf"
+  check "$w resolves the pin from .agent/project.json runtime.version" \
+    sh -c 'grep -A3 "id: node_pin" "$1" | grep -Fq "runtime.version"' sh "$wf"
+  check "$w setup-node consumes the resolved pin" \
+    sh -c 'grep -Fq -- "$2" "$1"' sh "$wf" \
+    'node-version: ${{ steps.node_pin.outputs.version }}'
+  pin_at="$(grep -n -m1 -F 'id: node_pin' "$wf" | cut -d: -f1)"
+  sn_at="$(grep -n -m1 -F 'uses: actions/setup-node@v4' "$wf" | cut -d: -f1)"
+  check "$w resolves the pin before setup-node provisions" \
+    sh -c 'test -n "$1" && test -n "$2" && test "$1" -lt "$2"' sh "$pin_at" "$sn_at"
 done
+# pr-review reads the pin from the trusted base-SHA checkout at the workspace
+# root (issue #19): the control plane being merged INTO, not the PR under
+# review, decides the runtime the audit provisions.
+PR_WF="$REPO_ROOT/.github/workflows/pr-review.yml"
+base_at="$(grep -n -m1 -F 'github.event.pull_request.base.sha' "$PR_WF" | cut -d: -f1)"
+pin_at="$(grep -n -m1 -F 'id: node_pin' "$PR_WF" | cut -d: -f1)"
+check "pr-review derives the pin from the trusted base checkout" \
+  sh -c 'test -n "$1" && test -n "$2" && test "$1" -lt "$2"' sh "$base_at" "$pin_at"
+check "pr-review pin step reads the root copy, not the reviewed/ copy" \
+  sh -c '! grep -A3 "id: node_pin" "$1" | grep -Fq "reviewed/.agent/project.json"' sh "$PR_WF"
 check "pr-review.yml still delegates merging to review-verdict.sh" \
   grep -Fq "scripts/review-verdict.sh" "$REPO_ROOT/.github/workflows/pr-review.yml"
 
