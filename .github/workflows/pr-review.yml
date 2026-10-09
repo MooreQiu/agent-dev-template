@@ -81,7 +81,8 @@ jobs:
           VERDICT=$(gh pr view "$N" --json comments --jq '[.comments[] | select(.author.login == "github-actions[bot]")][-1].body' | head -1)
           echo "最新审计结论: $VERDICT"
           if echo "$VERDICT" | grep -q "VERDICT: APPROVE"; then
-            gh pr merge "$N" --merge --delete-branch 2>/dev/null || gh pr merge "$N" --merge --delete-branch
+            # squash 合并保持线性历史（与 setup.sh 的 required_linear_history 兼容）
+            gh pr merge "$N" --squash --delete-branch 2>/dev/null || gh pr merge "$N" --squash --delete-branch
             echo "✅ 审计通过，已合并"
           else
             echo "⛔ 审计未通过（$VERDICT），已标记等待处理"
