@@ -153,6 +153,8 @@ All dispatch paths (comment, assignment, nightly sweep, scheduler) funnel throug
 
 Declare prerequisites in a `## Dependencies` section of the issue body, referencing issues by number (`Depends: #12` or bare `#12, #13` lists). A prerequisite counts as satisfied only when a **merged** pull request links it with `Closes`/`Fixes`/`Resolves` -- a merely closed issue does not unlock its dependents. Scheduling is serial (one task per event), so dependent work cannot start before its prerequisite lands.
 
+The complete operational semantics -- milestone versus queue, dependency rules, claim leases, and how to read CI gate results against review verdicts -- are collected in the operations guide, [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
 ## Review verdicts
 
 Every PR from an `agent/*` branch gets two independent checks in the *PR Review* workflow:
@@ -185,11 +187,12 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 - `scripts/spec-track.sh` -- read-only single-feature status from approved spec to verified completion ([docs/SPEC_TRACK.md](docs/SPEC_TRACK.md)).
 - Optional Projects board via `./setup.sh --with-project`; labels and assignees remain the single source of truth, the board is a view ([docs/SPEC_TRACK.md](docs/SPEC_TRACK.md) for tracking, [INSTALL.md](INSTALL.md) for the board).
 - Role preflight and run records: [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md).
+- Day-two run control -- pause/resume/cancel, budget exhaustion, rejected-PR repair, stale claims, retained partial work -- is documented in [docs/RUN_CONTROL.md](docs/RUN_CONTROL.md).
 
 ## Troubleshooting, upgrade, and removal
 
 - **Troubleshooting**: the symptom/cause/fix table in [INSTALL.md](INSTALL.md) covers 403s on PR creation, model auth failures, sweep skips, stuck claims, and Projects sync errors; [docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md) has its own runbook table.
-- **Upgrade**: re-run `./deploy.sh <owner/name>` -- existing files are detected and skipped, so your customizations survive. There is no automated diff/upgrade path from upstream template changes yet; pulling template updates into a template-created repository is manual.
+- **Upgrade**: re-run `./deploy.sh <owner/name>` -- existing files are detected and skipped, so your customizations survive. There is no automated diff/upgrade path from upstream template changes yet; pulling template updates into a template-created repository is manual. The step-by-step upgrade, conflict, rollback, and removal checklists are in [docs/UPGRADE.md](docs/UPGRADE.md).
 - **Removal**: manual, by design -- delete the copied files (workflows under `.github/workflows/`, `scripts/`, `AGENTS.md`, `CLAUDE.md`, `INSTALL.md`, `docs/`, `.agent/`, `.specify/`, `.claude/`, `.codex/`), remove the labels/secrets/variables created by `setup.sh`, and disable the workflows. Nothing outside the repository is required.
 
 ## Security notes
