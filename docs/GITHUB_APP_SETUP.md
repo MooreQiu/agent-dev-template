@@ -114,14 +114,14 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 前提：上述 secrets 已配置。准备一个 `ready-for-agent` 的测试 issue（或任意 issue）。
 
 1. **人类评论触发派发**：用自己的账号在 issue 评论 `@claude 处理这个 issue`。
-   - 期望：Claude Dispatch 正常运行；agent 建分支、开 PR。
+   - 期望：Agent Dispatch 正常运行；agent 建分支、开 PR。
    - 验证 PR 作者身份是你配置的 `<slug>[bot]`（而非 `github-actions[bot]`）。
 2. **PR Review 自动触发、无需批准**：PR 打开后。
    - 期望：PR Review workflow 立即运行（状态不是 `action_required`）。
    - 验证：`gh run list --workflow pr-review.yml --limit 3` 无 approval 待批；
      Actions 页面没有 "Deployment/workflow is waiting for approval"。
 3. **ack 评论不递归**：观察 agent 的 "🤖 @claude 收到" 评论发出后。
-   - 期望：**不会**再起一个新的 Claude Dispatch run（bot 发言被 filter 拒绝）。
+   - 期望：**不会**再起一个新的 Agent Dispatch run（bot 发言被 filter 拒绝）。
    - 验证：`gh run list --workflow claude.yml --limit 5` 里同一 issue 只有一次派发。
 4. **fix push 再次触发 review**：在 PR 上用 `@claude` 请求修改，agent push 新提交。
    - 期望：PR Review 因 `synchronize` 重新运行，同样无需人工批准。
