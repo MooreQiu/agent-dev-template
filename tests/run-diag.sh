@@ -9,6 +9,8 @@
 #   1..99    task test: index of first failing check
 set -u
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export GIT_AUTHOR_NAME=diag GIT_AUTHOR_EMAIL=diag@example.com
+export GIT_COMMITTER_NAME=diag GIT_COMMITTER_EMAIL=diag@example.com
 W="$(mktemp -d "${TMPDIR:-/tmp}/diag-prep.XXXXXX")"
 
 mkdir -p "$W/origin" "$W/src/scripts" "$W/src/tests" "$W/src/.agent"
@@ -26,11 +28,11 @@ cat > "$W/src/.agent/project.json" <<'CFG'
   }
 }
 CFG
-git -C "$W/src" init -q || exit 22
-git -C "$W/src" add -A || exit 22
-git -C "$W/src" commit -qm baseline || exit 22
-git -C "$W/src" remote add origin "$W/origin/origin.git" || exit 22
-git -C "$W/src" push -q origin HEAD:refs/heads/main || exit 22
+git -C "$W/src" init -q || exit 30
+git -C "$W/src" add -A || exit 31
+git -C "$W/src" commit -qm baseline || exit 32
+git -C "$W/src" remote add origin "$W/origin/origin.git" || exit 33
+git -C "$W/src" push -q origin HEAD:refs/heads/main || exit 34
 git clone -q "$W/origin/origin.git" "$W/runner" || exit 23
 git -C "$W/runner" config user.name runner
 git -C "$W/runner" config user.email runner@example.com
