@@ -76,14 +76,4 @@ jobs:
           fi
 
       - name: Auto-merge if approved
-        run: |
-          N="${{ github.event.pull_request.number }}"
-          VERDICT=$(gh pr view "$N" --json comments --jq '[.comments[] | select(.author.login == "github-actions[bot]")][-1].body' | head -1)
-          echo "最新审计结论: $VERDICT"
-          if echo "$VERDICT" | grep -q "VERDICT: APPROVE"; then
-            gh pr merge "$N" --merge --delete-branch 2>/dev/null || gh pr merge "$N" --merge --delete-branch
-            echo "✅ 审计通过，已合并"
-          else
-            echo "⛔ 审计未通过（$VERDICT），已标记等待处理"
-            gh pr edit "$N" --add-label agent-failed || true
-          fi
+        run: bash scripts/review-verdict.sh "${{ github.event.pull_request.number }}"
