@@ -64,6 +64,40 @@ jobs:
         # 把 PR 消失的“成功”任务重新排队，然后再挑选新任务。
         run: bash scripts/agent-claim.sh reconcile
 
+      - name: Repair rejected PRs (issue #20, bounded rounds)
+        # 退回修复兜底路径：先收敛 agent-failed 的 PR（同一 issue/分支重走
+        # 统一实现管线，推送后由 synchronize 事件自动触发绑定新 head SHA
+        # 的独立复审），再调度新任务。即时路径是 agent-scheduler 的
+        # labeled 事件；本步骤覆盖错过事件的场景与 GITHUB_TOKEN 打标签
+        # 不触发事件的部署。修复轮次受 .agent/budgets.json 的
+        # max_repair_rounds 约束（scripts/pr-repair.sh）。
+        run: |
+          DEFAULT="${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}"
+          FLASH="${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}"
+          BASE="${{ github.event.repository.default_branch }}"
+          QUEUED=$(scripts/pr-repair.sh scan)
+          if [ -z "$QUEUED" ]; then
+            echo "没有待修复的退回 PR"
+            exit 0
+          fi
+          for PR in $QUEUED; do
+            echo "=== 修复退回 PR #$PR ==="
+            ISSUE="$(gh pr view "$PR" --json body --jq .body | grep -Eo '(Closes|Fixes|Resolves) #[0-9]+' | head -1 | grep -Eo '[0-9]+')"
+            if [ -n "$ISSUE" ] && [ "$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("trivial") != null')" = "true" ]; then
+              echo "trivial 任务，使用 flash 模型"
+              export ANTHROPIC_DEFAULT_SONNET_MODEL="$FLASH" ANTHROPIC_DEFAULT_OPUS_MODEL="$FLASH" ANTHROPIC_DEFAULT_HAIKU_MODEL="$FLASH"
+            else
+              export ANTHROPIC_DEFAULT_SONNET_MODEL="$DEFAULT" ANTHROPIC_DEFAULT_OPUS_MODEL="$DEFAULT" ANTHROPIC_DEFAULT_HAIKU_MODEL="$FLASH"
+            fi
+            rc=0
+            scripts/pr-repair.sh dispatch "$PR" --target "origin/$BASE" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "PR #$PR 修复路径收敛（已修复/跳过/受控阻塞）"
+            else
+              echo "PR #$PR 修复失败（rc=$rc）；保留 agent-failed 标签，下轮 sweep 重试"
+            fi
+          done
+
       - name: Claim and execute queue
         run: |
           LIMIT="${{ github.event.inputs.limit || '3' }}"
