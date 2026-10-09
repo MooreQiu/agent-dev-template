@@ -631,7 +631,7 @@ check "gate validates the reviewed tree from trusted policy" \
 check "merge-control path guard exists" \
   sh -c 'grep -Fq "protected=true" "$1"' sh "$WF"
 check "write, upload, status and merge steps skip protected runs" \
-  sh -c '[ "$(grep -Fc "steps.control.outputs.protected != '"'"'true'"'"'" "$1")" -ge 4 ]' sh "$WF"
+  sh -c '[ "$(grep -Fc "steps.control.outputs.protected != '"'"'true'"'"'" "$1")" -ge 5 ]' sh "$WF"
 check "reviewer works in a disposable copy of the reviewed tree" \
   sh -c 'grep -Fq "review-workspace" "$1" && grep -Fq "cp -a" "$1"' sh "$WF"
 check "reviewer output is captured to a file" \
