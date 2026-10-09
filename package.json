@@ -4,6 +4,6 @@
   "private": true,
   "description": "Agent-driven development template (see AGENTS.md)",
   "scripts": {
-    "test": "bash tests/test_license.sh"
+    "test": "bash tests/test_license.sh && bash tests/test-app-auth.sh && bash tests/test-dispatch-filter.sh"
   }
 }

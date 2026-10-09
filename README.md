@@ -40,7 +40,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | 项目宪法 | `.specify/memory/constitution.md` | TDD/小步交付/安全约束，优先级最高 |
 | Spec Kit | `.claude/skills/speckit-*` | specify→plan→tasks→implement 规格驱动 |
 | Issue/PR 模板 | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md` | 验收标准 checkbox 结构化 |
-| 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（免 GitHub App） |
+| 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（bot 触发一律过滤，防递归） |
 | 互审+自动合并 | `.github/workflows/pr-review.yml` | agent PR 独立审计（跑测试、贴 verdict），APPROVE 自动合并 |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
 | 本地命令 | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
@@ -48,6 +48,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | 一键配置 | `setup.sh` | labels、secrets、模型 vars、branch protection、auto-merge |
 | 一键部署 | `deploy.sh` | 部署进已有仓库（开 PR，不覆盖已有文件） |
 | 跨 harness | `scripts/agent.sh`、[docs/HARNESSES.md](docs/HARNESSES.md) | AGENTS.md 单一事实源，claude/codex/opencode/gemini 一键切换 |
+| GitHub App 认证 | `scripts/app-auth.sh`、[docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md) | 短时效 installation token，自动化 PR 免审批门（未配置时回退 GITHUB_TOKEN） |
 | Projects 看板 | `setup.sh --with-project`、`project-sync.yml` | 可选：labels → 看板单向同步 |
 
 ## 模型分级与换 provider
@@ -74,4 +75,5 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 
 - branch protection 在 GitHub Free 私有仓库不可用（`setup.sh` 会提示），公开仓库或 Pro 可用；auto-merge 已尽量启用
 - "Allow GitHub Actions to create and approve pull requests" 只能网页开启；未开启时 agent 推好分支并附 compare 链接和现成 PR 描述
-- 派发与 sweep 均用 headless Claude Code CLI（不依赖 Claude GitHub App）
+- GITHUB_TOKEN 触发的自动化事件会被 GitHub 挂起等人工批准；按 [docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md) 配置 GitHub App 后消除（未配置时自动回退 GITHUB_TOKEN，仅多一道审批门）
+- 派发与 sweep 均用 headless Claude Code CLI（认证用的 GitHub App 与 Claude GitHub App 无关）
