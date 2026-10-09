@@ -42,7 +42,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | 角色预检 | `scripts/agent-preflight.sh`、`.agent/roles.json` | 三角色（specify/implement/review）必需文件/技能/工具校验，运行留痕（[docs/AGENT_ROLES.md](docs/AGENT_ROLES.md)） |
 | Issue/PR 模板 | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md` | 验收标准 checkbox 结构化 |
 | 派发 | `.github/workflows/claude.yml` | @claude 评论 / 指派触发 headless Claude Code（bot 触发一律过滤，防递归） |
-| 互审+自动合并 | `.github/workflows/pr-review.yml` | agent PR 独立审计（跑测试、贴 verdict），APPROVE 自动合并 |
+| 互审+自动合并 | `.github/workflows/pr-review.yml`、`scripts/review-verdict.sh` | 独立审计产出绑定 PR/head SHA/run 的结构化 verdict artifact（bot 评论仅展示），判决器复核门禁与 head 未变后 squash 合并；修改合并控制路径的 PR 需人工合并 |
 | CI 质量门禁 | `.github/workflows/ci.yml`、`scripts/ci-gate.sh` | 按 `.agent/project.json` 确定性跑 build/test/lint/typecheck＋TDD 红绿证据（不采信 agent 自述）；pr-review 合并前强制同一门禁 |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
 | 本地命令 | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
