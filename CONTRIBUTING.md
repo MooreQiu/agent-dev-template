@@ -11,9 +11,13 @@ issue 上的 label 决定它在队列中的状态：
 | `ready-for-agent` | 已就绪待认领（工作队列的唯一入口） |
 | `agent-claimed` | agent-sweep 已认领（锁，GITHUB_TOKEN 无法指派真人时用标签代替） |
 | `agent-failed` | agent 处理失败，已释放回队列，可重试 |
-| `blocked` | 有阻塞，勿认领 |
+| `agent-paused` | 人工暂停：worker 拒绝启动/优雅停止并保留可恢复状态，移除标签即恢复 |
+| `agent-cancelled` | 人工取消：worker 拒绝启动，直到人工清除标签 |
+| `blocked` | 有阻塞，勿认领（自主运行预算耗尽时自动打上并附 summary 评论） |
 | `trivial` | 碎任务，CI 自动切 flash 快速模型（约快一倍，适合文档/配置类） |
 | `p0`–`p3` | 优先级，p0 最高（p0 阻塞其他一切） |
+
+自主运行的预算上限（重试/修复/收敛/时长/步数）与持久状态见 `.agent/budgets.json` 与 [docs/BUDGETS.md](docs/BUDGETS.md)。
 
 ## 三种触发方式
 
