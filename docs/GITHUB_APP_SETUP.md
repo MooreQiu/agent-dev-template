@@ -24,20 +24,21 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 | 字段 | 值 |
 |---|---|
-| GitHub App name | `mooreqiu-agent-dev-bot`（**必须**精确使用此名，原因见下；仍需全站唯一） |
+| GitHub App name | 任意全站唯一名字（如 `acme-agent-dev-bot`）；bot 登录名用变量配置，不再要求固定名（issue #36） |
 | Homepage URL | 仓库地址即可 |
 | Expire user authorization tokens | 默认即可 |
 | Webhook → Active | **取消勾选**（不需要） |
 | Where can this GitHub App be installed | Only on this account（推荐） |
 
-> **为什么 App 名字必须是精确的 `mooreqiu-agent-dev-bot`**：自 issue #19 起，合并授权来自
-> `scripts/review-verdict.sh` 的结构化 verdict artifact（绑定 PR 号、head SHA、run id 与门禁
-> 证据摘要），bot 评论只作展示；但评论/标签仍以 App 的 bot 身份发布，App 的 bot 登录名由
-> App 名字生成（slug + `[bot]`）。把 App 命名为精确的 `mooreqiu-agent-dev-bot`，审计评论才
-> 能与文档中记录的审计 bot 身份（`github-actions[bot]` / `mooreqiu-agent-dev-bot[bot]` 的
-> 精确 allowlist）对得上，避免与其他 App 的评论混淆；未来任何重新引入评论识别的检查也沿用
-> 同一 allowlist（未知 App 的评论永远不能驱动合并）。所以请直接把 App 命名为
-> `mooreqiu-agent-dev-bot`。
+> **为什么 App 名字不再要求固定（issue #36）**：GitHub App 名字占用**全站唯一**命名空间，
+> 模板无法预置一个所有部署都能注册的名字（固定名早已被他人占用）。App 的 bot 登录名由
+> App 名字生成（slug + `[bot]`），所以请**任选一个全站唯一的名字**创建 App，然后把仓库
+> 变量 `AGENT_REVIEWER_BOT_LOGIN` 设为它的 bot 登录名 `<slug>[bot]`（见第 4 步）。
+> 自 issue #19 起合并授权来自 `scripts/review-verdict.sh` 的结构化 verdict artifact，
+> bot 评论只作展示；`scripts/reviewer-identity.sh` 用该变量解析展示/过滤用的精确
+> allowlist（`github-actions[bot]` + 你配置的登录名），变量未设或非法时仅回退
+> `github-actions[bot]`，未知 bot 永远不被承认——展示与授权彻底分离，未来任何重新
+> 引入评论识别的检查也沿用同一 allowlist。
 
 **Repository permissions（最小集）**：
 
@@ -63,7 +64,7 @@ GraphQL: refusing to allow a GitHub App to create or update workflow
 > 合不动"，容易被误判成审计没通过——其实是 App 权限问题（见故障排查表）。
 
 App 已创建但漏了这条权限时补授权：GitHub → Settings → Developer settings →
-GitHub Apps → `mooreqiu-agent-dev-bot` → **Permissions & events** → Repository
+GitHub Apps → 你创建的 App → **Permissions & events** → Repository
 permissions → Workflows 设为 Read and write → **Save changes**（改完如安装页
 提示重新授权，按提示确认即可）。
 
@@ -83,10 +84,22 @@ App 页面底部 **Private keys → Generate a private key**，下载 `.pem` 文
 
 ```bash
 gh secret set APP_ID          -b "<App 页面的 App ID，纯数字>"
-gh secret set APP_PRIVATE_KEY < ~/Downloads/mooreqiu-agent-dev-bot.2026-10-09.private-key.pem
+gh secret set APP_PRIVATE_KEY < ~/Downloads/<app-name>.private-key.pem
 # 可选：显式指定 installation ID，跳过每次 API 自动发现
 gh secret set APP_INSTALLATION_ID -b "12345678"
 ```
+
+再配置审计 bot 登录名变量（issue #36：App 名字任选，登录名走变量；把 `<slug>`
+换成你的 App 名字的 slug 形式——小写、空格转连字符）：
+
+```bash
+gh variable set AGENT_REVIEWER_BOT_LOGIN -b "<slug>[bot]"
+# 例：App 叫 acme agent dev bot → gh variable set AGENT_REVIEWER_BOT_LOGIN -b "acme-agent-dev-bot[bot]"
+```
+
+不设或设错（大小写、缺 `[bot]` 后缀等）时，`scripts/reviewer-identity.sh` 会
+打印警告并仅回退 `github-actions[bot]`；不影响合并授权（自 issue #19 授权只来自
+verdict artifact），只影响审计评论的展示/归因过滤。
 
 可选变量（限制谁能让 @claude 派发干活；不设 = 任何人类用户）：
 
@@ -102,7 +115,7 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 
 1. **人类评论触发派发**：用自己的账号在 issue 评论 `@claude 处理这个 issue`。
    - 期望：Claude Dispatch 正常运行；agent 建分支、开 PR。
-   - 验证 PR 作者身份是 `mooreqiu-agent-dev-bot[bot]`（而非 `github-actions[bot]`）。
+   - 验证 PR 作者身份是你配置的 `<slug>[bot]`（而非 `github-actions[bot]`）。
 2. **PR Review 自动触发、无需批准**：PR 打开后。
    - 期望：PR Review workflow 立即运行（状态不是 `action_required`）。
    - 验证：`gh run list --workflow pr-review.yml --limit 3` 无 approval 待批；
@@ -139,4 +152,5 @@ gh variable set AGENT_ALLOWED_ACTORS -b "你的登录名,同事的登录名"
 ```bash
 bash tests/test-app-auth.sh          # 认证选择 / 凭证不落日志 / workflow 接线
 bash tests/test-dispatch-filter.sh   # bot 递归过滤 / 调用者白名单
+bash tests/test-reviewer-identity.sh # 审计 bot 登录名变量 / 回退 / fail-closed
 ```

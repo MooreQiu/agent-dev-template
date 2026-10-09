@@ -40,6 +40,10 @@ jobs:
       ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}
       API_TIMEOUT_MS: "3000000"
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      # repo 变量只经 ${{ vars.* }} 上下文注入，不进 process env（issue #36）：
+      # 审计 bot 登录名按部署配置，未设/非法时 scripts/reviewer-identity.sh
+      # 仅回退 github-actions[bot]；只影响展示/过滤，不影响合并授权
+      AGENT_REVIEWER_BOT_LOGIN: ${{ vars.AGENT_REVIEWER_BOT_LOGIN }}
     steps:
       # Trusted control plane: the revision being merged INTO. Every gate,
       # verdict and merge decision below runs from this checkout (issue #19).
