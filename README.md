@@ -46,17 +46,28 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 | CI 质量门禁 | `.github/workflows/ci.yml`、`scripts/ci-gate.sh` | 按 `.agent/project.json` 确定性跑 build/test/lint/typecheck＋TDD 红绿证据（不采信 agent 自述）；pr-review 合并前强制同一门禁 |
 | 自动认领 | `.github/workflows/agent-sweep.yml` | 每晚扫 ready-for-agent 队列，逐个 TDD 完成并提 PR |
 | 本地命令 | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
-| 模型分级 | workflow 运行时解析 | `trivial` 标签自动切 flash 快速模型 |
+| 模型/effort 配置 | `scripts/model-config.sh` | 评论覆盖 `model=`/`effort=`、trivial 切 flash、三层优先级，非法值拒绝并回评 |
 | 一键配置 | `setup.sh` | labels、secrets、模型 vars、branch protection、auto-merge |
 | 一键部署 | `deploy.sh` | 部署进已有仓库（开 PR，不覆盖已有文件） |
 | 跨 harness | `scripts/agent.sh`、[docs/HARNESSES.md](docs/HARNESSES.md) | AGENTS.md 单一事实源，claude/codex/opencode/gemini 一键切换 |
 | GitHub App 认证 | `scripts/app-auth.sh`、[docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md) | 短时效 installation token，自动化 PR 免审批门（未配置时回退 GITHUB_TOKEN） |
 | Projects 看板 | `setup.sh --with-project`、`project-sync.yml` | 可选：labels → 看板单向同步 |
 
-## 模型分级与换 provider
+## 模型与 effort 配置
 
-- **trivial 分级**：issue 打 `trivial` 标签 → 自动用 flash 快速模型（约快一倍），适合文档/配置类小任务
-- **换 provider 只改 4 个值**：secrets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` + vars `AGENT_MODEL_DEFAULT`/`AGENT_MODEL_FLASH`，任何 Anthropic 兼容端点通用，对照表见 [INSTALL.md](INSTALL.md)
+`@claude` 派发用的模型与推理 effort 按三层**优先级**解析（高 → 低，由 `scripts/model-config.sh` 统一裁决）：
+
+1. **评论覆盖**：触发评论里直接写选项，如 `@claude model=opus effort=high 修复失败的测试`
+   - `model`：别名 `sonnet`/`opus` → `AGENT_MODEL_DEFAULT` 档，`haiku` → `AGENT_MODEL_FLASH` 档；也可写具体模型名（如 `glm-4.7`、`claude-sonnet-4-6`，限字母数字与 `. _ : / - [ ]`）
+   - `effort`：`low` / `medium` / `high` / `xhigh` / `max`
+   - 选项必须是独立 token（`models=x` 不识别）；同一 key 出现两个不同值会被判为歧义
+   - **非法值直接拒绝**：agent 回评说明原因与正确用法，本次派发不启动，修正后重新评论即可
+2. **仓库配置**（repo vars）：`AGENT_MODEL_DEFAULT`（常规档）、`AGENT_MODEL_FLASH`（`trivial` 标签自动切换，约快一倍）、`AGENT_EFFORT_DEFAULT`（留空/不设 = 用 CLI 默认）
+3. **文档化兜底**：模型 `glm-5.3[1m]` / `glm-5.3-flash[1m]`；effort 不设置
+
+运行时会在日志与确认评论里报告 provider endpoint（不含任何密钥）、实际模型与请求的 effort 及其来源（override / 仓库配置 / 兜底）。**effort 供应商限制**：effort 经 Claude Code `--effort` 传递，官方 Anthropic 端点支持；第三方兼容端点（如智谱 GLM）可能不生效——此时报告标注 `provider-dependent (unknown)`，不承诺未生效的设置。
+
+**换 provider 只改 secrets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` + vars `AGENT_MODEL_DEFAULT`/`AGENT_MODEL_FLASH`**（可选 `AGENT_EFFORT_DEFAULT`），任何 Anthropic 兼容端点通用，对照表见 [INSTALL.md](INSTALL.md)。
 
 ## Projects 看板与里程碑（可选）
 

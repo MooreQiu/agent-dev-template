@@ -42,7 +42,7 @@ cd /tmp/adt
 ```bash
 gh label list                                  # 含 ready-for-agent、agent-claimed、agent-failed、blocked、trivial
 gh secret list -R <owner/name>                 # 含 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN
-gh variable list -R <owner/name>               # 含 AGENT_MODEL_DEFAULT、AGENT_MODEL_FLASH
+gh variable list -R <owner/name>               # 含 AGENT_MODEL_DEFAULT、AGENT_MODEL_FLASH（AGENT_EFFORT_DEFAULT 可选）
 gh workflow list -R <owner/name>               # Claude Dispatch / Agent Sweep / PR Review 均 active
 ```
 
@@ -64,13 +64,31 @@ gh pr list                                     # 出现 app/github-actions 创�
 | 密钥 | secret `ANTHROPIC_AUTH_TOKEN` | 智谱 key | `sk-ant-...` | 供应商 key |
 | 默认模型 | var `AGENT_MODEL_DEFAULT` | `glm-5.3[1m]` | `claude-sonnet-4-6` 等 | 供应商模型名 |
 | 快速模型 | var `AGENT_MODEL_FLASH` | `glm-5.3-flash[1m]` | `claude-haiku-4-5` 等 | 供应商模型名 |
+| effort 默认（可选） | var `AGENT_EFFORT_DEFAULT` | 留空（CLI 默认） | `high` 等 | 供应商是否生效未知 |
 
 ```bash
 gh secret set ANTHROPIC_BASE_URL -R <owner/name> -b "<端点>"
 gh secret set ANTHROPIC_AUTH_TOKEN -R <owner/name> -b "<key>"
 gh variable set AGENT_MODEL_DEFAULT -R <owner/name> -b "<模型>"
 gh variable set AGENT_MODEL_FLASH -R <owner/name> -b "<模型>"
+# 可选：推理 effort 默认值（low/medium/high/xhigh/max；不设 = CLI 默认）
+gh variable set AGENT_EFFORT_DEFAULT -R <owner/name> -b "<effort>"
 ```
+
+### 模型/effort 优先级与评论覆盖（issue #9）
+
+`@claude` 派发的模型与 effort 由 `scripts/model-config.sh` 按三层优先级解析：**评论覆盖 > 仓库配置（上表 vars）> 文档化兜底**（`glm-5.3[1m]` / `glm-5.3-flash[1m]`；effort 用 CLI 默认）。`trivial` 标签在无覆盖时自动选 flash 档。
+
+评论里可按任务临时指定，选项必须是独立 token：
+
+```text
+@claude model=opus effort=high 修复失败的测试
+```
+
+- `model`：别名 `sonnet`/`opus` → `AGENT_MODEL_DEFAULT` 档，`haiku` → `AGENT_MODEL_FLASH` 档；或具体模型名（字母数字与 `. _ : / - [ ]`）
+- `effort`：`low` / `medium` / `high` / `xhigh` / `max`
+
+非法值（未知别名、含空格/引号/shell 元字符、不在枚举内、同 key 冲突）会被**拒绝**：agent 在 issue/PR 回评具体原因与正确用法，本次派发不启动；修正后重新评论即可。运行日志与确认评论会报告 endpoint（不含密钥）、模型、请求的 effort 及来源；第三方端点的 effort 是否生效标注为 `provider-dependent (unknown)`，不做未生效的承诺。
 
 ## 故障排查
 
