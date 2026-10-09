@@ -323,6 +323,17 @@ grep -Fq 'AGENT_RESOLVED_EFFORT' "$CLAUDE_YML" \
   && pass "dispatch applies the resolved effort when set" \
   || fail "dispatch applies the resolved effort when set" "no --effort wiring"
 
+# Structural wiring: every "claude -p" call site (PR-comment, issue-comment,
+# and assigned-trigger dispatch) must append "${MODEL_ARGS[@]}"; a plain
+# presence grep cannot tell a wired path from a missed one.
+n_cli="$(grep -c 'claude -p ' "$CLAUDE_YML")"
+n_wired="$(grep -cF '"${MODEL_ARGS[@]}"' "$CLAUDE_YML")"
+if [ "$n_cli" -gt 0 ] && [ "$n_cli" -eq "$n_wired" ]; then
+  pass "all claude -p call sites apply MODEL_ARGS ($n_wired/$n_cli)"
+else
+  fail "all claude -p call sites apply MODEL_ARGS" "call sites=$n_cli wired=$n_wired"
+fi
+
 grep -Fq 'AGENT_RUN_SUMMARY' "$CLAUDE_YML" \
   && pass "acknowledgement comments carry the run summary" \
   || fail "acknowledgement comments carry the run summary" "summary not referenced"
