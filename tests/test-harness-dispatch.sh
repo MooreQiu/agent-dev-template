@@ -519,11 +519,12 @@ fi
 MOCKBIN="$TMP/mockbin"
 MOCKLOG="$TMP/mock.log"
 mkdir -p "$MOCKBIN"
-cat >"$MOCKBIN/node" <<'EOF'
+MOCK_NODE_MAJOR="$(sed -n 's/.*"version": *"\([0-9][0-9]*\)".*/\1/p' "$REPO_ROOT/.agent/project.json" | sed -n 1p)"
+cat >"$MOCKBIN/node" <<EOF
 #!/usr/bin/env bash
 set -u
-[ "${1:-}" = "--version" ] || exit 0
-echo "v20.9.0"
+[ "\${1:-}" = "--version" ] || exit 0
+echo "v${MOCK_NODE_MAJOR}.0.0"
 EOF
 cat >"$MOCKBIN/npm" <<EOF
 #!/usr/bin/env bash
