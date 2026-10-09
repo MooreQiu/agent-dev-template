@@ -35,47 +35,65 @@ git checkout -B chore/agent-dev-template "origin/$DEFAULT_BRANCH" 2>/dev/null ||
 
 say() { printf '\n==> %s\n' "$*"; }
 
+# 模板必要组件清单：自动化（workflows）/指令（AGENTS、CLAUDE、docs）
+# /技能（.claude/skills）/启动器（.claude/commands、scripts）/安装（INSTALL、setup）
+ITEMS=(
+  AGENTS.md
+  CLAUDE.md
+  INSTALL.md
+  docs
+  scripts
+  .specify
+  .claude/commands
+  .claude/skills
+  .github/ISSUE_TEMPLATE
+  .github/PULL_REQUEST_TEMPLATE.md
+  .github/workflows/claude.yml
+  .github/workflows/agent-sweep.yml
+  .github/workflows/pr-review.yml
+  .github/workflows/project-sync.yml
+  setup.sh
+)
+
 say "复制体系文件到 ${REPO}（已存在的一律跳过，不覆盖你的定制）"
+SKIPPED=()
+COPIED=()
 copy_item() {
   local item="$1"
   if [ -e "$item" ]; then
     echo "  ⚠️ 已存在，跳过: $item"
+    SKIPPED[${#SKIPPED[@]}]="$item"
     return
   fi
   mkdir -p "$(dirname "$item")"
   cp -R "$SRC/$item" "$item"
+  COPIED[${#COPIED[@]}]="$item"
   echo "  ✓ $item"
 }
-copy_item AGENTS.md
-copy_item docs
-copy_item scripts
-copy_item .specify
-copy_item .claude/commands
-copy_item .claude/skills
-copy_item .github/ISSUE_TEMPLATE
-copy_item .github/PULL_REQUEST_TEMPLATE.md
-copy_item .github/workflows/claude.yml
-copy_item .github/workflows/agent-sweep.yml
-copy_item setup.sh
+for item in "${ITEMS[@]}"; do
+  copy_item "$item"
+done
 
 say "提交"
-git add AGENTS.md .specify .claude .github setup.sh
-if git diff --cached --quiet; then
-  echo "没有任何文件被复制/变更，退出"
-  exit 0
+if [ "${#COPIED[@]}" -gt 0 ]; then
+  git add "${COPIED[@]}"
 fi
-git commit -m "Add agent-driven development template (issue queue, TDD, spec-kit, auto-claim workflows)"
-echo "  ✓ commit 完成"
+if ! git diff --cached --quiet; then
+  git commit -m "Add agent-driven development template (issue queue, TDD, spec-kit, auto-claim workflows)"
+  echo "  ✓ commit 完成"
 
-if [ "$MODE" = "remote" ]; then
-  say "推送并创建 PR"
-  git push -u origin chore/agent-dev-template
-  gh pr create --base "$DEFAULT_BRANCH" --head chore/agent-dev-template \
-    --title "Add agent-driven development template" \
-    --body "部署自 [agent-dev-template](https://github.com/MooreQiu/agent-dev-template)。合并后按 INSTALL.md 完成剩余配置（网页开关 + AGENTS.md 项目信息）。"
-  echo "  ✓ PR 已创建"
+  if [ "$MODE" = "remote" ]; then
+    say "推送并创建 PR"
+    git push -u origin chore/agent-dev-template
+    gh pr create --base "$DEFAULT_BRANCH" --head chore/agent-dev-template \
+      --title "Add agent-driven development template" \
+      --body "部署自 [agent-dev-template](https://github.com/MooreQiu/agent-dev-template)。合并后按 INSTALL.md 完成剩余配置（网页开关 + AGENTS.md 项目信息）。"
+    echo "  ✓ PR 已创建"
+  else
+    echo "本地模式：文件已复制并 commit，未 push。检查后执行：git push -u origin chore/agent-dev-template && gh pr create --base $DEFAULT_BRANCH"
+  fi
 else
-  echo "本地模式：文件已复制并 commit，未 push。检查后执行：git push -u origin chore/agent-dev-template && gh pr create"
+  echo "  没有新文件需要提交"
 fi
 
 if [ -n "$REPO" ] && [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
@@ -86,6 +104,16 @@ else
   echo "  设置 ANTHROPIC_AUTH_TOKEN 环境变量后运行: ./setup.sh --repo=$REPO"
 fi
 
-say "部署完成（剩余两步见 INSTALL.md）"
+if [ "${#SKIPPED[@]}" -gt 0 ]; then
+  say "⚠️ 部署不完整：以下必要组件已存在被跳过（保留你的定制，未覆盖）"
+  for item in "${SKIPPED[@]}"; do
+    echo "    - $item"
+  done
+  echo "  请对照上游模板手动核对上述组件，必要时合并模板更新，才算部署完成"
+else
+  say "部署完成：全部必要组件已部署"
+fi
+
+say "剩余人工步骤（见 INSTALL.md）"
 echo "  1. 网页开启: Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests"
 echo "  2. 填写 AGENTS.md 的「项目信息」占位（构建/测试命令）"
