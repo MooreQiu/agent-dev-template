@@ -1,0 +1,72 @@
+name: Spec Track
+
+# Read-only pipeline tracker for autonomous development of one approved spec
+# (issue #24): aggregates approval, planning, the issue queue, and the
+# convergence record into a single state with the next action, and writes it
+# to the run summary. Normal execution stays autonomous; waiting-on-human
+# states (missing/stale approval, blocked reports) surface as a notice, not a
+# failure. The tracker never creates or mutates anything (docs/SPEC_TRACK.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Path of the spec to track, e.g. specs/016-demo/spec.md"
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: spec-track-${{ github.event.inputs.spec }}
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SPEC: ${{ github.event.inputs.spec }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the approved revision must resolve
+
+      - name: Track the pipeline state for the spec
+        run: |
+          set +e
+          bash scripts/spec-track.sh "$SPEC" --json > status.json 2> track.log
+          rc=$?
+          bash scripts/spec-track.sh "$SPEC" > status.txt 2>> track.log
+          set -e
+          cat status.json
+          cat status.txt
+          {
+            echo "## Spec pipeline status"
+            echo
+            echo '```json'
+            cat status.json
+            echo '```'
+            echo
+            echo '```'
+            cat status.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$rc" in
+            0) ;;
+            4) echo "::notice::Pipeline is waiting on a human (approval or blocked resolution); see the job summary." ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Upload status artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-track-status
+          path: |
+            status.json
+            status.txt
+            track.log
+          if-no-files-found: warn
