@@ -67,7 +67,7 @@ echo "gh $*" >> "$GH_LOG"
 if [ "$1" = repo ] && [ "$2" = view ]; then echo "acme/fixture"; exit 0; fi
 if [ "$1" = api ]; then
   case "$2" in
-    *"/actions/artifacts?")
+    *"/actions/artifacts?"*)
       name=$(printf '%s\n' "$2" | sed -n 's/^.*?name=\([^&]*\)&.*$/\1/p')
       idx="$ARTIFACTS/$name.tsv"
       [ -f "$idx" ] || exit 0
@@ -222,9 +222,11 @@ if [ -f "$SA" ]; then
       sh "$MAN" "$R1" "$A" "$SPEC_REL"
     check "manifest binds a target commit" \
       sh -c 'grep -Fq "\"target\":" "$1"' sh "$MAN"
+    PLAN_H=$(digest "$A/$FD/plan.md")
+    TASKS_H=$(digest "$A/$FD/tasks.md")
     check "manifest lists every payload file with its sha256" \
-      sh -c 'grep -Fq "{\"path\": \"specs/016-demo/plan.md\", \"sha256\": \"$(digest "$3/specs/016-demo/plan.md")\"}" "$1" && grep -Fq "{\"path\": \"specs/016-demo/tasks.md\", \"sha256\": \"$(digest "$3/specs/016-demo/tasks.md")\"}" "$1"' \
-      sh "$MAN" "" "$A"
+      sh -c 'grep -Fq "{\"path\": \"specs/016-demo/plan.md\", \"sha256\": \"$2\"}" "$1" && grep -Fq "{\"path\": \"specs/016-demo/tasks.md\", \"sha256\": \"$3\"}" "$1"' \
+      sh "$MAN" "$PLAN_H" "$TASKS_H"
   fi
 
   run_sa "$A" manifest planning "$SPEC_REL" "$R1"
@@ -283,8 +285,9 @@ if [ -f "$SA" ]; then
     cmp -s "$A/$FD/plan.md" "$FRESH/$FD/plan.md"
   check "restored tasks.md matches the saved bytes" \
     cmp -s "$A/$FD/tasks.md" "$FRESH/$FD/tasks.md"
+  AFTER=$(approved_hashes "$FRESH")
   check "approved spec and approval record are preserved unchanged" \
-    sh -c '[ "$1" = "$(approved_hashes "$2")" ]' sh "$BEFORE" "$FRESH"
+    sh -c '[ "$1" = "$2" ]' sh "$BEFORE" "$AFTER"
   check "restoration lists and downloads via the artifact endpoints" \
     sh -c 'grep -q "actions/artifacts?name=" "$1" && grep -q "actions/artifacts/12/zip" "$1"' sh "$GH_LOG"
   check "exactly one bundle download happens" \
@@ -496,8 +499,9 @@ if [ -f "$SA" ]; then
   run_sa "$FRESH2" restore planning "$SPEC_REL" "$R1"
   check "protected paths in the manifest are rejected" \
     sh -c '[ "$1" = 1 ] && grep -qi "protected" "$2"' sh "$STATUS" "$OUT_ERR"
+  AFTER2=$(approved_hashes "$FRESH2")
   check "the protected files were never touched" \
-    sh -c '[ "$1" = "$(approved_hashes "$2")" ]' sh "$BEFORE" "$FRESH2"
+    sh -c '[ "$1" = "$2" ]' sh "$BEFORE" "$AFTER2"
 
   # path trying to escape the bundle root
   T="$TMP/escape"
