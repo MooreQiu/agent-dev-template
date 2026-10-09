@@ -519,6 +519,64 @@ if [ -f "$SA" ]; then
 fi
 
 # ============================================================================
+echo "== recovery: findings that fail the schema are never restored =="
+
+# Regression for the PR #68 audit verdict: a convergence bundle whose
+# findings.jsonl the converge entrypoint would reject (a malformed line, or a
+# verified line citing a requirement absent from the approved spec) is
+# binding- and hash-valid, so restore used to accept it; every later run then
+# skipped evaluation, re-failed on verify, and re-uploaded the same poison --
+# a loop no rerun could escape. The next run must re-evaluate, never restore.
+if [ -f "$SA" ]; then
+  poison_bundle() { # poison_bundle <id> <poisoned-findings-file>
+    P="$TMP/poison"
+    rm -rf "$P"; mkdir -p "$P/evidence"
+    cp "$2" "$P/findings.jsonl"
+    cp "$A/$FD/convergence/complete.json" "$P/"
+    cp "$A/$FD/convergence/evidence/gate.json" "$P/evidence/"
+    # The workflow binds first and hashes what it binds: rebuild that shape
+    # around the poisoned bytes so only the content is wrong.
+    sed 's#{"path": "specs/016-demo/convergence/findings.jsonl", "sha256": "[0-9a-fA-F]*"}#{"path": "specs/016-demo/convergence/findings.jsonl", "sha256": "'"$(digest "$P/findings.jsonl")"'"}#' \
+      "$A/$FD/convergence/manifest.json" > "$P/manifest.json"
+    make_bundle "$TMP/poison.zip" "$P"
+    rm -f "$ARTIFACTS/$CKEY.tsv"
+    register_artifact "$1" "2026-10-10T06:00:00Z" "$CKEY" "$TMP/poison.zip"
+  }
+
+  PF="$TMP/poison-findings.jsonl"
+  PFRESH="$TMP/poison-fresh"
+  git clone -q "$A" "$PFRESH" 2>/dev/null
+
+  # flavor 1: agent prose leaked into the JSON Lines file
+  {
+    printf '{"id": "G001", "requirement": "REQ1", "kind": "missing", "summary": "gap", "evidence": "tests/demo.txt"}\n'
+    printf 'The convergence looks mostly complete to me.\n'
+  } > "$PF"
+  poison_bundle 81 "$PF"
+  run_sa "$PFRESH" restore convergence "$SPEC_REL" "$R1" --target "$TARGET"
+  check "a binding-valid bundle with malformed findings is not restored" \
+    sh -c '[ "$1" = 5 ] && grep -qi "findings" "$2"' sh "$STATUS" "$OUT_ERR"
+  check "malformed findings never reach the checkout" \
+    test ! -f "$PFRESH/$FD/convergence/findings.jsonl"
+
+  # flavor 2: a verified line citing a requirement the approved spec lacks
+  {
+    printf '{"id": "G001", "requirement": "REQ1", "kind": "missing", "summary": "gap", "evidence": "tests/demo.txt"}\n'
+    printf '{"id": "V999", "requirement": "REQ999", "kind": "verified", "summary": "ok", "evidence": "trust me"}\n'
+  } > "$PF"
+  poison_bundle 82 "$PF"
+  run_sa "$PFRESH" restore convergence "$SPEC_REL" "$R1" --target "$TARGET"
+  check "a verified finding citing an unknown requirement is not restored" \
+    sh -c '[ "$1" = 5 ] && grep -qi "requirement" "$2"' sh "$STATUS" "$OUT_ERR"
+
+  # The stored poison must not survive as "the" convergence state: the
+  # workflow maps this rejection to the same path as stale -- evaluation.
+  check "schema-invalid bundles send the next run to fresh evaluation" \
+    sh -c 'grep -A16 "spec-artifacts.sh restore convergence" "$1" | grep -q "5)"' \
+    sh "$REPO_ROOT/.github/workflows/spec-converge.yml"
+fi
+
+# ============================================================================
 echo "== AC4: duplicate uploads and newest-wins retrieval =="
 
 if [ -f "$SA" ]; then
@@ -611,6 +669,17 @@ if [ -f "$WFC" ]; then
   check "convergence bundle carries the binding manifest" \
     sh -c 'grep -q "manifest\.json" "$1" && grep -q "findings.jsonl" "$1" && grep -q "evidence" "$1"' \
     sh "$CARTIFACT_PATHS"
+  # Persistence gating (PR #68 audit verdict): bind/upload must never run on
+  # a bare always-plus-ready condition -- findings the verify step did not
+  # validate must never be bound into a "valid" bundle and uploaded.
+  check "spec-converge verify step exposes a validation status output" \
+    sh -c 'grep -q "id: verify" "$1"' sh "$WFC"
+  check "convergence bind persists only findings the verify step validated" \
+    sh -c 'grep -A2 "name: Bind the convergence bundle manifest" "$1" | grep -q "steps.verify.outputs.status"' sh "$WFC"
+  check "convergence upload persists only findings the verify step validated" \
+    sh -c 'grep -A2 "name: Upload convergence artifacts" "$1" | grep -q "steps.verify.outputs.status"' sh "$WFC"
+  check "every persisting step gates on the verify status" \
+    sh -c '! grep "always()" "$1" | grep "steps.precheck.outputs.outcome" | grep -v "steps.verify.outputs.status" | grep -q .' sh "$WFC"
 fi
 
 echo
