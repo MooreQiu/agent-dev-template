@@ -39,13 +39,24 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Bootstrap environment (pinned tooling, fail-fast checks)
+        run: bash scripts/bootstrap-env.sh
 
       - name: Configure git
         run: |
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+      # Deterministic quality gate on the merge ref, independent of the review
+      # text below: fails (and blocks the auto-merge step) on nonzero command
+      # exits or missing test-first evidence. The merge decider re-verifies the
+      # same evidence before merging, so branch protection is not required.
+      - name: CI quality gate (independent of review text)
+        run: |
+          EVIDENCE="$RUNNER_TEMP/ci-gate-evidence"
+          bash scripts/ci-gate.sh run --evidence-dir "$EVIDENCE" \
+            --base "${{ github.event.pull_request.base.sha }}"
+          echo "CI_GATE_EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
 
       - name: Independent peer review
         run: |
@@ -76,14 +87,4 @@ jobs:
           fi
 
       - name: Auto-merge if approved
-        run: |
-          N="${{ github.event.pull_request.number }}"
-          VERDICT=$(gh pr view "$N" --json comments --jq '[.comments[] | select(.author.login == "github-actions[bot]")][-1].body' | head -1)
-          echo "最新审计结论: $VERDICT"
-          if echo "$VERDICT" | grep -q "VERDICT: APPROVE"; then
-            gh pr merge "$N" --merge --delete-branch 2>/dev/null || gh pr merge "$N" --merge --delete-branch
-            echo "✅ 审计通过，已合并"
-          else
-            echo "⛔ 审计未通过（$VERDICT），已标记等待处理"
-            gh pr edit "$N" --add-label agent-failed || true
-          fi
+        run: bash scripts/review-verdict.sh "${{ github.event.pull_request.number }}"

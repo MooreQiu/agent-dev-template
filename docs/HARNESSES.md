@@ -18,8 +18,13 @@
 AGENTS.md                    # 唯一事实源（所有 harness 通用）
 CLAUDE.md                    # 一行 @AGENTS.md 导入 + Claude 专属补充
 scripts/agent.sh             # 分发器：AGENT=<名> 即切换 harness 执行同一 prompt
+scripts/agent-preflight.sh   # 角色预检（specify/implement/review）+ 运行记录
+scripts/sync-skills.sh       # .claude/skills → .codex/skills 同步 + 清单哈希
 .claude/commands/            # Claude 命令（/claim /tdd /milestone-plan /queue）
-.specify/                    # spec-kit：默认 claude 集成
+.claude/skills/              # speckit 技能（单一维护源，Claude Code 自动发现）
+.codex/skills/               # Codex 副本（由 sync-skills.sh 镜像，$speckit-* 调用）
+.agent/roles.json            # 角色 → 指令/产物/技能/工具映射（见 docs/AGENT_ROLES.md）
+.specify/                    # spec-kit：claude + codex 双集成
 ```
 
 本地/CI 一键切换：
@@ -57,6 +62,8 @@ AGENT=gemini   scripts/agent.sh "按 AGENTS.md 处理 issue #5"   # 需 GEMINI_A
 OpenCode 还有官方 GitHub 集成：`opencode github install` 自动生成 Actions workflow。
 
 ## Spec Kit 多集成共存
+
+本仓库已内置 claude + codex 双集成（`.specify/integration.json`），Codex 侧技能由 `scripts/sync-skills.sh` 从 `.claude/skills` 镜像维护，不需要在线加装。
 
 ```bash
 uvx --from git+https://github.com/github/spec-kit.git specify integration install codex     # 加装 codex 的 $speckit-* skills

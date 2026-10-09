@@ -4,6 +4,6 @@
   "private": true,
   "description": "Agent-driven development template (see AGENTS.md)",
   "scripts": {
-    "test": "for t in tests/test*.sh; do echo \"== $t\"; bash \"$t\" || exit 1; done"
+    "test": "bash tests/run-all.sh"
   }
 }
