@@ -270,13 +270,15 @@ for wf in claude.yml agent-sweep.yml pr-review.yml; do
   fi
 done
 
-# Verdict lookup moved from pr-review.yml into scripts/review-verdict.sh
-# (main's architecture); it must recognize the App bot login so auto-merge
-# keeps working once the App is configured (issue #13).
+# Since issue #19 the merge decision consumes the structured verdict artifact,
+# not comments; scripts/review-verdict.sh still documents the exact reviewer
+# bot identities (issue #13) whose comments appear on the PR so operators can
+# attribute the audit trail, and so any future comment-based check keeps the
+# exact allowlist (github-actions[bot] / mooreqiu-agent-dev-bot[bot]).
 grep -Fq 'mooreqiu-agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
-  && pass "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
-  || fail "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
-    "scripts/review-verdict.sh does not allowlist mooreqiu-agent-dev-bot[bot]"
+  && pass "reviewer bot identities documented (comments are display-only since #19)" \
+  || fail "reviewer bot identities documented (comments are display-only since #19)" \
+    "scripts/review-verdict.sh does not document mooreqiu-agent-dev-bot[bot]"
 
 # --- AC: setup runbook + smoke test documentation ---
 contains() { # contains <fixed string> <description>

@@ -19,8 +19,14 @@
 #     required status check, and pr-review.yml enforces the same gate before
 #     the auto-merge decider (AC2, AC4)
 #   - the merge controller (scripts/review-verdict.sh) consults the gate:
-#     with CI_GATE_EVIDENCE set it merges only on accepted evidence; with the
-#     variable unset it keeps the previous behavior (AC4)
+#     with CI_GATE_EVIDENCE set it merges only on accepted evidence; missing
+#     or failed evidence blocks the merge outright (issue #19: no evidence,
+#     no merge)
+#   - trusted-policy validation (issue #19): with --target-dir the gate runs
+#     its commands against another working tree (the reviewed PR checkout)
+#     while the command set itself is still read from the trusted revision
+#     that provides the script, so a PR-modified .agent/project.json cannot
+#     neuter the gate
 #
 # Run: bash tests/test-ci-gate.sh
 
@@ -261,7 +267,30 @@ sed 's/"red_commit": "[0-9a-f]*"/"red_commit": "00000000000000000000000000000000
 run_gate "$WORK/tf" check --evidence-dir "$WORK/ev-fake"
 expect "check rejects a red_commit outside the repository" bad 'red_commit'
 
-# --- merge controller consults the gate (AC4) --------------------------------
+# --- trusted policy vs reviewed tree (issue #19 AC1) --------------------------
+
+echo "== gate policy from the trusted revision"
+
+make_project pol
+BASE="$(fixture_head "$WORK/pol")"
+SAB="$WORK/sabotaged"
+cp -a "$WORK/pol" "$SAB"
+cat > "$SAB/.agent/project.json" <<'CFG'
+{
+  "commands": {
+    "test": "true"
+  }
+}
+CFG
+EV="$WORK/ev-sab"
+run_gate "$WORK/pol" run --evidence-dir "$EV" --base "$BASE" --target-dir "$SAB"
+expect "PR-modified project.json cannot neuter the gate" ok 'gate: passed'
+check "the trusted command was executed, not the sabotaged one" \
+  sh -c 'grep -Fq "\"command\": \"bash tests/run-all.sh\"" "$1/gate.json" && ! grep -Fq "\"command\": \"true\"" "$1/gate.json"' sh "$EV"
+run_gate "$WORK/pol" check --evidence-dir "$EV" --target-dir "$SAB"
+expect "check mode accepts --target-dir" ok 'gate-check: passed'
+
+# --- merge controller consults the gate (AC4, issue #19 contract) -------------
 
 echo "== merge controller enforcement"
 
@@ -275,9 +304,9 @@ set -u
 echo "gh $*" >> "$GH_LOG"
 for a in "$@"; do
   case "$a" in
-    repos/*/issues/*/comments)
-      cat "$COMMENTS_FIXTURE"
-      exit 0
+    repos/*/pulls/[0-9]*)
+      cat "${PR_JSON:-/dev/null}"
+      exit $?
       ;;
   esac
 done
@@ -289,10 +318,11 @@ exit 1
 EOF
 chmod +x "$MOCK_BIN/gh"
 
-cat > "$WORK/approve.json" <<'EOF'
-[{"id": 1, "user": {"login": "github-actions[bot]"}, "body": "VERDICT: APPROVE - all acceptance tests verified green"}]
-EOF
-export COMMENTS_FIXTURE="$WORK/approve.json"
+HEAD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+printf '{"number": 42, "head": {"sha": "%s"}}\n' "$HEAD_SHA" > "$WORK/pr.json"
+export PR_JSON="$WORK/pr.json"
+
+printf 'VERDICT: APPROVE - all acceptance tests verified green\n' > "$WORK/approve.md"
 
 GOOD_EV="$WORK/ev-merge-ok"
 mkdir -p "$GOOD_EV"
@@ -310,34 +340,53 @@ printf '{"status": "verified", "base": "n/a", "head": "n/a", "red_commit": "%s",
   "$(git -C "$REPO_ROOT" rev-parse HEAD)" > "$GOOD_EV/test-first.json"
 printf 'red run output\n' > "$GOOD_EV/test-first.log"
 
+BAD_EV="$WORK/ev-merge-bad"
+cp -R "$GOOD_EV" "$BAD_EV"
+sed 's/"command": "npm test", "exit": 0/"command": "npm test", "exit": 1/' \
+  "$GOOD_EV/gate.json" > "$BAD_EV/gate.json"
+
 mkdir -p "$WORK/ev-merge-empty"
 
-verdict_run() { # verdict_run <evidence-dir|->
+verdict_artifact() { # verdict_artifact <evidence-dir>
+  CI_GATE_EVIDENCE="$1" GITHUB_RUN_ID=4242 PATH="$MOCK_BIN:$PATH" \
+    bash "$REPO_ROOT/scripts/review-verdict.sh" write 42 \
+    --reviewer-output "$WORK/approve.md" --head-sha "$HEAD_SHA" \
+    --artifact "$WORK/art.json" >/dev/null 2>&1
+}
+
+verdict_merge() { # verdict_merge <evidence-dir|->
   : > "$GH_LOG"
   if [ "$1" = "-" ]; then
-    VOUT="$(env -u CI_GATE_EVIDENCE PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
-      bash "$REPO_ROOT/scripts/review-verdict.sh" 42 2>"$WORK/verdict.err")"
+    VOUT="$(env -u CI_GATE_EVIDENCE GITHUB_ACTIONS=true GITHUB_RUN_ID=4242 \
+      GITHUB_REPOSITORY=acme/fixture PATH="$MOCK_BIN:$PATH" \
+      bash "$REPO_ROOT/scripts/review-verdict.sh" merge 42 \
+      --artifact "$WORK/art.json" 2>"$WORK/verdict.err")"
     vrc=$?
   else
-    VOUT="$(CI_GATE_EVIDENCE="$1" PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
-      bash "$REPO_ROOT/scripts/review-verdict.sh" 42 2>"$WORK/verdict.err")"
+    VOUT="$(CI_GATE_EVIDENCE="$1" GITHUB_ACTIONS=true GITHUB_RUN_ID=4242 \
+      GITHUB_REPOSITORY=acme/fixture PATH="$MOCK_BIN:$PATH" \
+      bash "$REPO_ROOT/scripts/review-verdict.sh" merge 42 \
+      --artifact "$WORK/art.json" 2>"$WORK/verdict.err")"
     vrc=$?
   fi
 }
 
-verdict_run "$GOOD_EV"
-check "accepted evidence lets an APPROVE verdict merge" \
+verdict_artifact "$GOOD_EV"
+verdict_merge "$GOOD_EV"
+check "accepted evidence lets an APPROVE artifact merge" \
   sh -c '[ "$1" -eq 0 ] && grep -q "pr merge 42" "$2"' sh "$vrc" "$GH_LOG"
 
-verdict_run "$WORK/ev-merge-empty"
-check "rejected evidence blocks the merge" \
+verdict_artifact "$BAD_EV"
+verdict_merge "$BAD_EV"
+check "failed gate evidence blocks the merge" \
   sh -c '[ "$1" -ne 0 ] && ! grep -Eq "pr (merge|edit)" "$2"' sh "$vrc" "$GH_LOG"
 check "rejection explains the gate failure" \
   grep -Eq 'gate' "$WORK/verdict.err"
 
-verdict_run -
-check "unset CI_GATE_EVIDENCE keeps the previous merge behavior" \
-  sh -c '[ "$1" -eq 0 ] && grep -q "pr merge 42" "$2"' sh "$vrc" "$GH_LOG"
+verdict_artifact "$GOOD_EV"
+verdict_merge -
+check "unset CI_GATE_EVIDENCE blocks the merge (issue #19)" \
+  sh -c '[ "$1" -ne 0 ] && ! grep -Eq "pr (merge|edit)" "$2"' sh "$vrc" "$GH_LOG"
 
 # --- CI workflow, stable check names, wiring (AC2, AC4) ----------------------
 
