@@ -49,9 +49,20 @@ jobs:
         with:
           persist-credentials: false # git push 认证统一走 scripts/app-auth.sh
 
+      # 单一事实源（issue #57）：runtime pin 取自 .agent/project.json，
+      # 与 scripts/bootstrap-env.sh 的校验保持一致。
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ steps.node_pin.outputs.version }}
 
       - name: Bootstrap environment (pinned tooling, fail-fast checks)
         run: bash scripts/bootstrap-env.sh
