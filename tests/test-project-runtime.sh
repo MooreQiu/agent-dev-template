@@ -191,7 +191,14 @@ if [ -f "$REPO_ROOT/$PROJECT" ]; then
     '') bad "claude code cli pinned to exact version" ;;
     *) bad "claude code cli pinned to exact version" "got '$PIN'" ;;
   esac
+  RT_VER="$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$REPO_ROOT/$PROJECT" | sed -n 1p)"
+  check "runtime pin satisfies the claude-code engine (node >= 22)" \
+    sh -c 'test "${1%%.*}" -ge 22' sh "$RT_VER"
 fi
+check "package-lock.json is committed" \
+  git -C "$REPO_ROOT" ls-files --error-unmatch package-lock.json
+check "runtime.lockfile declares the committed package-lock.json" \
+  grep -Fq '"lockfile": "package-lock.json"' "$REPO_ROOT/$PROJECT"
 check "AGENTS.md has no unresolved project-info placeholder" \
   sh -c "! grep -Fq '待填' '$REPO_ROOT/AGENTS.md'"
 check "AGENTS.md points to the machine-readable configuration" \
@@ -205,6 +212,12 @@ for wf in claude.yml agent-sweep.yml pr-review.yml; do
     grep -Fq "scripts/bootstrap-env.sh" "$REPO_ROOT/.github/workflows/$wf"
   check "$wf has no unpinned claude-code install" \
     sh -c "! grep -Fq 'npm install -g @anthropic-ai/claude-code' '$REPO_ROOT/.github/workflows/$wf'"
+done
+for wf in "$REPO_ROOT"/.github/workflows/*.yml; do
+  grep -Fq 'node-version:' "$wf" || continue
+  nv="$(sed -n 's/.*node-version: "\([0-9]*\)".*/\1/p' "$wf" | sed -n 1p)"
+  check "$(basename "$wf") provisions node >= 22 (claude-code engine)" \
+    sh -c 'test "$1" -ge 22' sh "$nv"
 done
 check "pr-review.yml still delegates merging to review-verdict.sh" \
   grep -Fq "scripts/review-verdict.sh" "$REPO_ROOT/.github/workflows/pr-review.yml"
@@ -251,9 +264,9 @@ pf "$COPY_A" verify-project
 if rc_bad && out_grep "runtime.version"; then ok "node runtime without pinned version is rejected"; else bad "node runtime without pinned version is rejected"; fi
 git -C "$COPY_A" checkout -- .agent/project.json
 
-cfg copy-a lockfile "package-lock.json"
+cfg copy-a lockfile "yarn.lock"
 pf "$COPY_A" verify-project
-if rc_bad && out_grep "package-lock.json"; then ok "declared but missing lockfile is rejected"; else bad "declared but missing lockfile is rejected"; fi
+if rc_bad && out_grep "yarn.lock"; then ok "declared but missing lockfile is rejected"; else bad "declared but missing lockfile is rejected"; fi
 git -C "$COPY_A" checkout -- .agent/project.json
 
 touch "$COPY_A/Gemfile.lock"
@@ -294,12 +307,21 @@ run_boot "$COPY_A"
 if rc0; then ok "bootstrap passes on a valid configuration"; else bad "bootstrap passes on a valid configuration" "exit $(cat "$RC"): $(tail -3 "$OUT" | tr '\n' ' ')"; fi
 check "installs the pinned claude code cli" \
   log_has "install -g @anthropic-ai/claude-code@$PIN"
-check "installs dependencies via configured command (no lockfile)" log_line "npm install"
+check "committed package-lock.json drives a frozen npm ci install" log_line "npm ci"
 if grep -Fq "$TOKEN" "$OUT" || grep -Fq "$TOKEN" "$MOCK_LOG"; then
   bad "bootstrap never prints credential values"
 else
   ok "bootstrap never prints credential values"
 fi
+
+COPY_N="$WORK/copy-nolock"
+make_copy copy-nolock
+rm -f "$COPY_N/package-lock.json"
+cfg copy-nolock lockfile ""
+: > "$MOCK_LOG"
+run_boot "$COPY_N"
+check "missing lockfile falls back to the configured install command" \
+  log_line "npm install"
 
 COPY_L="$WORK/copy-lock"
 make_copy copy-lock
@@ -310,6 +332,8 @@ check "package-lock.json forces a frozen npm ci install" log_line "npm ci"
 
 COPY_Y="$WORK/copy-yarn"
 make_copy copy-yarn
+rm -f "$COPY_Y/package-lock.json"
+cfg copy-yarn lockfile ""
 touch "$COPY_Y/yarn.lock"
 : > "$MOCK_LOG"
 run_boot "$COPY_Y"
@@ -355,6 +379,12 @@ NODE_VERSION_OUT=v18.1.0
 export NODE_VERSION_OUT
 run_boot "$COPY_A"
 if rc_bad && out_grep "version mismatch"; then ok "node version mismatch fails fast"; else bad "node version mismatch fails fast"; fi
+unset NODE_VERSION_OUT
+
+NODE_VERSION_OUT=v24.1.0
+export NODE_VERSION_OUT
+run_boot "$COPY_A"
+if rc0; then ok "bootstrap succeeds on a machine whose default node is newer than the pin"; else bad "bootstrap succeeds on a machine whose default node is newer than the pin" "exit $(cat "$RC"): $(tail -3 "$OUT" | tr '\n' ' ')"; fi
 unset NODE_VERSION_OUT
 
 echo "== non-Node projects (AC3)"
