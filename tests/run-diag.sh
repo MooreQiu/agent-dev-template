@@ -77,10 +77,17 @@ cat > "$d/src/.agent/project.json" <<'CFG'
 CFG
 git -C "$d/src" init -q || exit 50
 git -C "$d/src" add -A || exit 50
+tracked="$(git -C "$d/src" ls-files scripts/ | grep -c 'agent-')"
+case "$tracked" in
+  0) exit 90 ;;
+  1) exit 91 ;;
+esac
 git -C "$d/src" commit -qm "baseline" || exit 50
 git -C "$d/src" remote add origin "$d/origin/origin.git" || exit 50
 git -C "$d/src" push -q origin HEAD:refs/heads/main || exit 50
 git clone -q "$d/origin/origin.git" "$d/runner" || exit 50
+[ -f "$d/runner/scripts/agent-task.sh" ] || exit 93
+[ -f "$d/runner/scripts/agent-claim.sh" ] || exit 94
 git -C "$d/runner" config user.name runner
 git -C "$d/runner" config user.email runner@example.com
 
