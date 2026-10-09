@@ -232,7 +232,10 @@ if [ "$MODE" = write ]; then
   RUN_ID="${GITHUB_RUN_ID:-}"
   [ -n "$RUN_ID" ] || die 8 "write requires GITHUB_RUN_ID (run identity binding)"
 
-  VERDICT="$(parse_verdict "$REVIEWER_OUT")"
+  # No command substitution: a die inside $(...) would only exit the subshell
+  # and the failure would be swallowed. parse_verdict sets VERDICT as a
+  # global; its stdout is discarded here.
+  parse_verdict "$REVIEWER_OUT" >/dev/null
 
   resolve_evidence
 
