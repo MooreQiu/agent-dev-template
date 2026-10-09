@@ -1,6 +1,6 @@
 # Spec Converge：对照已审批规格验收项目完成度并调度剩余工作
 
-issue #21 的落地说明：任务队列排空 ≠ 项目满足 spec。closed issue / merged PR 不能证明整体集成达标，所以收敛阶段把"集成后的目标分支"重新对照已审批的 spec、plan、需求与验收场景评估一遍，把缺口变成可调度的修复任务，全部达标才发布完成状态。入口是 `scripts/spec-converge.sh`，Actions 连接是 `.github/workflows/spec-converge.yml`（workflow_dispatch，人工触发）。
+issue #21 的落地说明：任务队列排空 ≠ 项目满足 spec。closed issue / merged PR 不能证明整体集成达标，所以收敛阶段把"集成后的目标分支"重新对照已审批的 spec、plan、需求与验收场景评估一遍，把缺口变成可调度的修复任务，全部达标才发布完成状态。入口是 `scripts/spec-converge.sh`，Actions 连接是 `.github/workflows/spec-converge.yml`（workflow_dispatch，人工触发）。findings/evidence/完成记录跨运行持久化与恢复遵循 [docs/SPEC_ARTIFACTS.md](docs/SPEC_ARTIFACTS.md) 的产物契约。
 
 ## 流程总览
 
