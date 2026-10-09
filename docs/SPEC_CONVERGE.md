@@ -7,6 +7,8 @@ issue #21 的落地说明：任务队列排空 ≠ 项目满足 spec。closed is
 ```
 任务队列排空（feature milestone 内无未关闭的非 blocked issue，且 tasks.md 未勾选项都有 issue）
   → workflow_dispatch 触发 spec-converge.yml（输入 spec 路径 + revision + 可选 budget）
+  → 共享环境引导（scripts/bootstrap-env.sh：项目配置校验、lockfile 安装、
+    钉住的 agent 工具、认证与非交互检查，一律 fail-fast）
   → 预检 implement 角色（scripts/agent-preflight.sh verify implement）
   → --precheck 校验队列已排空，未排空则以 notice 结束，稍后重跑
   → 收敛 agent 以 implement 角色显式调用 /speckit-converge，对集成目标分支
