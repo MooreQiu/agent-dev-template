@@ -80,7 +80,7 @@ gh variable set AGENT_MODEL_FLASH -R <owner/name> -b "<模型>"
 | run 日志模型调用失败/401 | secrets 配错或 key 无效 | `gh secret list` 核对；本地 `ANTHROPIC_BASE_URL=... ANTHROPIC_AUTH_TOKEN=... claude -p hi` 复测 |
 | agent 干完但没开 PR，给了 compare 链接 | 同 403 | 人工点链接开 PR，或开开关后重评论 @claude |
 | sweep 没处理某 issue | 有 assignee / 缺 ready-for-agent / 有 blocked | `/queue` 或 `gh issue view` 核对状态 |
-| issue 被 claim 后卡住 | run 崩溃未释放 | `gh issue edit <n> --remove-label agent-claimed` 手动释放 |
+| issue 被 claim 后卡住 | run 崩溃/被取消未释放 | 等租约到期由 sweep 的 reconcile 自动回收；急修可 `gh issue edit <n> --remove-label agent-claimed` 手动释放 |
 | claude-code-action 报需要 GitHub App | 用了官方 action 分支 | 本模板用 headless CLI，无需 App；确认没改回 anthropics/claude-code-action |
 | gh 偶发报 token invalid / 网络错误 | 到 github.com 的连接不稳定 | 重试即可（setup.sh 已内置重试）；必要时给 gh/git 配代理 |
 | project-sync 全部 ⚠️ 失败 | 缺 var 或 PAT 无 project 权限 | 核对 `AGENT_PROJECT_NUMBER`、`PROJECT_SYNC_ENABLED`、`GH_PROJECT_TOKEN` |

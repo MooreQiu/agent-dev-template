@@ -1,0 +1,109 @@
+name: Spec Converge
+
+# Verify project completion against the approved spec and schedule remaining
+# work (issue #21). Human-triggered once the feature's task queue looks
+# drained: the converge agent (implement role) evaluates the integrated
+# default branch against the approved spec, plan, requirements, and
+# acceptance scenarios; the entrypoint then turns findings into deduplicated
+# remediation issues or publishes completion. Approved spec, plan, and tasks
+# are never modified (docs/SPEC_CONVERGE.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Path of the approved spec, e.g. specs/016-demo/spec.md"
+        required: true
+      revision:
+        description: "Immutable commit SHA of the approval"
+        required: true
+      budget:
+        description: "Max remediation attempts per finding"
+        required: false
+        default: "2"
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: spec-converge-${{ github.event.inputs.spec }}
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SPEC: ${{ github.event.inputs.spec }}
+      REVISION: ${{ github.event.inputs.revision }}
+      BUDGET: ${{ github.event.inputs.budget || '2' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      API_TIMEOUT_MS: "3000000"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the approved revision must resolve
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Configure git
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+      - name: Preflight the implement role
+        run: bash scripts/agent-preflight.sh verify implement
+
+      # Convergence only makes sense once every scheduled task closed; an
+      # undrained queue exits 3 and stops as a notice, not a failure.
+      - name: Check the task queue has drained
+        run: |
+          FEATURE_DIR=$(dirname "$SPEC")
+          echo "FEATURE_DIR=$FEATURE_DIR" >> "$GITHUB_ENV"
+          set +e
+          bash scripts/spec-converge.sh "$SPEC" "$REVISION" --precheck --json
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            3) echo "::notice::Task queue for $SPEC is not drained yet; rerun after the remaining work closes." ; exit 0 ;;
+            *) exit "$rc" ;;
+          esac
+
+      # The converge skill assesses the integrated default branch against the
+      # approved spec, plan, requirements, and acceptance scenarios and writes
+      # machine-readable findings; closed issues alone are not evidence.
+      - name: Evaluate the integrated branch (converge)
+        run: |
+          AGENT=claude scripts/agent.sh "Converge the feature whose approved spec is $SPEC at revision $REVISION on the integrated default branch. Explicitly invoke the /speckit-converge skill, then write your findings as JSON Lines to $FEATURE_DIR/convergence/findings.jsonl following the schema in docs/SPEC_CONVERGE.md: one object per line with id, requirement, kind (missing, regression, or verified), summary, evidence; cite the requirement id exactly as it appears in the approved spec. Evaluate the whole repository against the spec, plan, requirements, and acceptance scenarios; closed issues and merged PRs alone are not evidence of completion. Never modify spec.md, approval.json, plan.md, or tasks.md; report requirements outside the approved spec instead of implementing them. After invoking the skill, record it with: bash scripts/agent-preflight.sh note-invocation implement speckit-converge"
+
+      - name: Verify completion and schedule remaining work
+        run: |
+          set +e
+          bash scripts/spec-converge.sh "$SPEC" "$REVISION" --findings "$FEATURE_DIR/convergence/findings.jsonl" --budget "$BUDGET" --json
+          rc=$?
+          set -e
+          if [ "$rc" -eq 4 ]; then
+            echo "::error::Convergence blocked: unresolved requirements were reported as blocked; a human decision is required."
+          fi
+          exit "$rc"
+
+      - name: Upload convergence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergence-${{ github.event.inputs.revision }}
+          path: |
+            ${{ env.FEATURE_DIR }}/convergence/findings.jsonl
+            ${{ env.FEATURE_DIR }}/convergence/evidence
+            ${{ env.FEATURE_DIR }}/convergence/complete.json
+          if-no-files-found: warn

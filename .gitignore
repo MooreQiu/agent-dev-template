@@ -13,3 +13,5 @@ coverage/
 .claude/settings.local.json
 .agent/runs/
 .ci-evidence/
+.agent-work/
+specs/*/convergence/evidence/
