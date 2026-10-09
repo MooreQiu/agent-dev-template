@@ -172,7 +172,7 @@ The dispatch model and reasoning effort resolve by precedence (highest first), d
 2. **Repository variables**: `AGENT_MODEL_DEFAULT`, `AGENT_MODEL_FLASH` (auto-selected for `trivial` issues), optional `AGENT_EFFORT_DEFAULT`.
 3. **Documented fallback**: `glm-5.3[1m]` / `glm-5.3-flash[1m]`; effort unset (CLI default).
 
-Other enabled harnesses resolve with the same precedence but different knobs: `@codex` reads `AGENT_MODEL_CODEX` and supports `effort=low|medium|high`; `@gemini` (`AGENT_MODEL_GEMINI`) and `@opencode` (`AGENT_MODEL_OPENCODE`, `provider/model` form) take concrete model names only and reject effort overrides. Harnesses beyond `claude` stay off until the `AGENT_HARNESSES` variable lists them; the full per-harness table is in [docs/HARNESSES.md](docs/HARNESSES.md).
+Other enabled harnesses resolve with the same precedence but different knobs: `@codex` reads `AGENT_MODEL_CODEX` and supports `effort=low|medium|high`; `@gemini` (`AGENT_MODEL_GEMINI`) and `@opencode` (`AGENT_MODEL_OPENCODE`, `provider/model` form) take concrete model names only and reject effort overrides. Harnesses beyond `claude` stay off until the `AGENT_HARNESSES` variable lists them; the full per-harness table is in [docs/HARNESSES.md](docs/HARNESSES.md). If the official `openai/codex-action` integration is already enabled (it also listens for `@codex` mentions), keep codex out of `AGENT_HARNESSES` to avoid double dispatch.
 
 Every run reports the endpoint (never secrets), the resolved model, and the source of each setting. Note the provider limitation: effort passes through Claude Code `--effort`; official Anthropic endpoints honor it, third-party compatible endpoints may not -- the report marks such cases `provider-dependent (unknown)`.
 
