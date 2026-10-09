@@ -35,7 +35,7 @@ cd /tmp/adt
 1. **网页开关**：Settings → Actions → General → Workflow permissions → 勾选
    `Allow GitHub Actions to create and approve pull requests`
    （不开则 agent 只能推分支 + 给 compare 链接，PR 需人工点开）
-2. **填写 AGENTS.md 的「项目信息」**：语言/构建/测试/lint 四行占位必须替换成真实命令
+2. **填写项目配置 `.agent/project.json`**：运行时/锁文件与 install/build/test/lint/typecheck 命令必须换成真实值（install 与 test 必填，占位符会被 `scripts/agent-preflight.sh verify-project` 拒绝），AGENTS.md「项目信息」同步为可读摘要
 
 ## 部署验证清单（逐项执行，全部满足才算成功）
 
