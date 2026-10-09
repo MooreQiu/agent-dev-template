@@ -27,7 +27,7 @@
 | Label | 含义 |
 |---|---|
 | `ready-for-agent` | 已就绪待认领（工作队列） |
-| `agent-claimed` | agent-sweep 已认领（锁） |
+| `agent-claimed` | agent 已认领（锁；由 agent-claim.sh 统一协议维护，租约过期自动回收） |
 | `agent-failed` | agent 处理失败，已释放回队列 |
 | `blocked` | 有阻塞，勿认领 |
 | `trivial` | 碎任务，CI 自动切 flash 快速模型 |

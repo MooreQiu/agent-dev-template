@@ -14,7 +14,7 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
       │                      @claude 评论      指派 assignee     每晚 agent-sweep
       │                              └────────── 择一触发 ──────────┘
       │                                            ▼
-      │                    锁（assignee / agent-claimed）→ 分支 agent/issue-N
+      │              原子认领（agent-claim.sh：owner + 租约）→ 独立 worktree 分支 agent/issue-N
       │                                            ▼
       │                    TDD：红（失败测试）→ 绿（最小实现）→ 重构
       │                                            ▼
@@ -64,8 +64,9 @@ GitHub 驱动的 agent 开发体系模板：issue 即工作单元、认领即加
 
 ## 认领语义（防重复干活）
 
-- **assignee = 锁**：本地 `/claim` 与 Action 派发先 `gh issue edit --add-assignee @me`
-- **CI sweep 用 `agent-claimed` 标签做锁**（GITHUB_TOKEN 无法指派真人），失败自动摘标签回队列
+- **统一原子认领协议**：评论派发、指派触发、夜间 sweep、修复 worker 全走 `scripts/agent-claim.sh`——以 `refs/agent-claims/<issue>` 上的 git CAS 推送（`--force-with-lease`）做原子 test-and-set，两个 worker 不可能同时持有同一 issue
+- **owner + 租约**：认领带执行者与过期时间；崩溃/取消留下的过期认领由 sweep 启动时的 `reconcile` 自动释放回队列（也可手动 `gh issue edit <n> --remove-label agent-claimed` 兜底）
+- **assignee = 本地锁**：本地 `/claim` 仍先 `gh issue edit --add-assignee @me`
 - `ready-for-agent` 是唯一队列入口；`blocked` 勿动；`trivial` 切快速模型
 
 ## 安全须知
