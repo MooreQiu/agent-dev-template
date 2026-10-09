@@ -557,7 +557,7 @@ if [ -f "$WF" ]; then
   check "workflow does not mask bootstrap or preflight failures" \
     sh -c '! grep -q "continue-on-error" "$1"' sh "$WF"
   check "workflow keeps setup-node for the configured node runtime" \
-    sh -c 'grep -q "node-version: \"20\"" "$1"' sh "$WF"
+    sh -c 'grep -qF "node-version: \${{ steps.node_pin.outputs.version }}" "$1"' sh "$WF"
   check "workflow prefights the implement role" \
     sh -c 'grep -q "agent-preflight.sh verify implement" "$1"' sh "$WF"
   check "precheck step delegates to the outcome adapter with an id" \
