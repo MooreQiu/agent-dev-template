@@ -219,6 +219,7 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 | Dispatch | `.github/workflows/claude.yml` | `@claude` / `@codex` / `@gemini` / `@opencode` comment or assignment triggers the matching harness (bot comments always filtered to prevent recursion) |
 | Scheduler + nightly sweep | `agent-scheduler.yml`, `agent-sweep.yml` | Dependency- and priority-aware queue advance, lease reconciliation |
 | Peer review + auto-merge | `.github/workflows/pr-review.yml`, `scripts/review-verdict.sh` | Audit distilled into a verdict artifact bound to the PR, reviewed head SHA, and review run (bot comments are display-only); the merge decider re-checks gate evidence and an unchanged head before squash merge; merge-control-path PRs merge manually |
+| Review watchdog | `.github/workflows/review-watchdog.yml`, `scripts/review-watchdog.sh` | Scheduled scan of open agent PRs for silent review failures (no run, failed-before-verdict, stuck, stalled repair); posts one rate-limited alert per PR+failure mode and at most one rate-limited close+reopen re-trigger per PR, never for merge-control PRs |
 | CI gate | `.github/workflows/ci.yml`, `scripts/ci-gate.sh` | Deterministic quality gate + test-first evidence |
 | Claim protocol | `scripts/agent-claim.sh` | Atomic claims with owner and lease |
 | Model resolution | `scripts/model-config.sh` | Comment override > repo vars > fallback |

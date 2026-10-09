@@ -70,6 +70,7 @@ ITEMS=(
   .github/workflows/claude.yml
   .github/workflows/agent-sweep.yml
   .github/workflows/pr-review.yml
+  .github/workflows/review-watchdog.yml
   .github/workflows/project-sync.yml
   setup.sh
 )
