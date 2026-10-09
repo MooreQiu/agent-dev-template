@@ -20,9 +20,10 @@
 #                   startup_failure -- i.e. it failed BEFORE a verdict could
 #                   be posted (startup_failure is the workflow-file-error
 #                   shape PR #38 hit)
-#   repair_stalled  the PR is labeled agent-failed but its branch has not
-#                   moved within the stall window: the issue #20 repair loop
-#                   is not running
+#   repair_stalled  the PR is labeled agent-failed but its head commit has
+#                   not moved within the stall window (branch-level commit
+#                   time, NOT the repo-wide pushed_at): the issue #20 repair
+#                   loop is not running
 #   (anything else is healthy -> a strict no-op)
 #
 # Actions:
@@ -34,8 +35,10 @@
 #     or silence watchdog state by commenting the marker themselves.
 #   - close+reopen re-trigger, ONLY for no_run, ONLY when the PR touches no
 #     merge-control path (the same patterns pr-review.yml protects, issue
-#     #19: control-path PRs are handled by a human), and at most once per PR
-#     per cooldown window (marker <!-- review-watchdog:action=retrigger -->).
+#     #19: control-path PRs are handled by a human), ONLY after the alert
+#     comment that carries its receipt marker actually posted, and at most
+#     once per PR per cooldown window (marker
+#     <!-- review-watchdog:action=retrigger -->).
 #   - findings never fail the sweep: scan exits 0 when it completes, non-zero
 #     only when it cannot scan at all.
 #
@@ -116,7 +119,7 @@ done
 IDENTS="$(bash "$SELF_DIR/reviewer-identity.sh" list | paste -sd, -)"
 [ -n "$IDENTS" ] || IDENTS="github-actions[bot]"
 
-prs_rows() { # open PRs as TSV: number, head branch, created, pushed, agent-failed
+prs_rows() { # open PRs as TSV: number, head branch, created, head sha, agent-failed
   gh api "repos/$REPO/pulls?state=open&per_page=100" 2>/dev/null | node -e '
     const fs = require("fs");
     let list;
@@ -127,16 +130,33 @@ prs_rows() { # open PRs as TSV: number, head branch, created, pushed, agent-fail
       const branch = p.head && p.head.ref;
       if (typeof branch !== "string") continue;
       const created = Math.floor(Date.parse(p.created_at || "") / 1000) || 0;
-      const pushedAt = p.head && p.head.repo && p.head.repo.pushed_at;
-      const pushed = Math.floor(Date.parse(pushedAt || "") / 1000) || created;
+      const sha = p.head && typeof p.head.sha === "string" ? p.head.sha : "";
       const labels = Array.isArray(p.labels) ? p.labels : [];
       const rejected = labels.some((l) => l && l.name === "agent-failed") ? 1 : 0;
-      process.stdout.write([p.number, branch, created, pushed, rejected].join("\t") + "\n");
+      process.stdout.write([p.number, branch, created, sha, rejected].join("\t") + "\n");
     }
   '
 }
 
+# Branch movement is measured on the PR head commit itself: the pulls list has
+# no per-branch time, and head.repo.pushed_at is the repository-wide last push
+# (refreshed by a push to ANY branch), which never goes stale in an active repo.
+head_epoch() { # head_epoch <sha> -- commit time of a head commit; fails if unusable
+  gh api "repos/$REPO/commits/$1" 2>/dev/null | node -e '
+    const fs = require("fs");
+    let c;
+    try { c = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { process.exit(1); }
+    const cm = c && c.commit;
+    const date = (cm && cm.committer && cm.committer.date) || (cm && cm.author && cm.author.date);
+    const epoch = Math.floor(Date.parse(date || "") / 1000);
+    if (!epoch) process.exit(1);
+    process.stdout.write(epoch + "\n");
+  '
+}
+
 latest_run() { # latest_run <branch> -- newest pr-review run as TSV
+  # $1 is interpolated unencoded (GitHub branch names with "&" would need
+  # URL-encoding); the head_branch equality filter below neutralizes injection.
   gh api "repos/$REPO/actions/runs?branch=$1&per_page=100" 2>/dev/null | node -e '
     const fs = require("fs");
     let data;
@@ -155,6 +175,8 @@ latest_run() { # latest_run <branch> -- newest pr-review run as TSV
 }
 
 marker_epoch() { # marker_epoch <pr> <marker> -- newest bot-authored marker time (0 = none)
+  # Only the first 100 comments are read; older markers beyond that are
+  # invisible (worst case: one duplicate alert on very long-lived PRs).
   gh api "repos/$REPO/issues/$1/comments?per_page=100" 2>/dev/null | node -e '
     const fs = require("fs");
     let comments;
@@ -187,7 +209,7 @@ control_hits() { # control_hits <pr> -- merge-control filenames touched by the P
 
 ROWS="$(prs_rows)" || die "cannot list the open PRs of $REPO"
 
-printf '%s\n' "$ROWS" | while IFS="$(printf '\t')" read -r NUM BRANCH CREATED PUSHED REJECTED; do
+printf '%s\n' "$ROWS" | while IFS="$(printf '\t')" read -r NUM BRANCH CREATED HEAD_SHA REJECTED; do
   [ -n "$NUM" ] || continue
   case "$BRANCH" in
     agent/*) ;;
@@ -220,8 +242,12 @@ printf '%s\n' "$ROWS" | while IFS="$(printf '\t')" read -r NUM BRANCH CREATED PU
             MODE="run_failed"
             ;;
           *)
-            if [ "$REJECTED" = "1" ] && [ "$PUSHED" -le "$((NOW - STALL_MIN * 60))" ]; then
-              MODE="repair_stalled"
+            if [ "$REJECTED" = "1" ]; then
+              BRANCH_EPOCH="$(head_epoch "$HEAD_SHA")" ||
+                { warn "cannot read the head commit time of branch $BRANCH; skipping PR #$NUM"; continue; }
+              if [ "$BRANCH_EPOCH" -le "$((NOW - STALL_MIN * 60))" ]; then
+                MODE="repair_stalled"
+              fi
             fi
             ;;
         esac
@@ -299,9 +325,11 @@ printf '%s\n' "$ROWS" | while IFS="$(printf '\t')" read -r NUM BRANCH CREATED PU
     fi
   } > "$BODY"
 
+  ALERT_POSTED=0
   if [ "$ALERT_DUE" -eq 1 ]; then
     if gh pr comment "$NUM" --body-file "$BODY"; then
       echo "PR #$NUM: $MODE -> alert posted"
+      ALERT_POSTED=1
     else
       warn "posting the alert for PR #$NUM failed"
     fi
@@ -311,10 +339,16 @@ printf '%s\n' "$ROWS" | while IFS="$(printf '\t')" read -r NUM BRANCH CREATED PU
   rm -f "$BODY"
 
   if [ "$RETRIGGER" = "due" ]; then
-    if gh pr close "$NUM" && gh pr reopen "$NUM"; then
-      echo "PR #$NUM: re-triggered the review via close+reopen"
+    # The receipt marker lives in the alert body: without a posted alert the
+    # next scan would see no receipt and re-trigger again, uncooled.
+    if [ "$ALERT_POSTED" -eq 1 ]; then
+      if gh pr close "$NUM" && gh pr reopen "$NUM"; then
+        echo "PR #$NUM: re-triggered the review via close+reopen"
+      else
+        warn "close+reopen of PR #$NUM failed; the re-trigger did not complete"
+      fi
     else
-      warn "close+reopen of PR #$NUM failed; the re-trigger did not complete"
+      echo "PR #$NUM: re-trigger skipped (its receipt-carrying alert was not posted; retried next scan)"
     fi
   elif [ "$RETRIGGER" = "control" ]; then
     echo "PR #$NUM: re-trigger skipped (merge-control path, human decides)"
