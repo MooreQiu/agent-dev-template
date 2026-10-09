@@ -38,11 +38,12 @@ trap cleanup EXIT
 
 GH_LOG="$TMP/gh.log"
 MOCK_BIN="$TMP/bin"
-mkdir -p "$MOCK_BIN" "$TMP/runs" "$TMP/comments" "$TMP/files"
+mkdir -p "$MOCK_BIN" "$TMP/runs" "$TMP/comments" "$TMP/files" "$TMP/commits"
 RUNS_DIR="$TMP/runs"
 COMMENTS_DIR="$TMP/comments"
 FILES_DIR="$TMP/files"
-export RUNS_DIR COMMENTS_DIR FILES_DIR
+COMMITS_DIR="$TMP/commits"
+export RUNS_DIR COMMENTS_DIR FILES_DIR COMMITS_DIR
 
 # --- mocked gh (records every call; serves live state from fixtures) --------
 cat > "$MOCK_BIN/gh" <<'EOF'
@@ -70,6 +71,17 @@ if [ "${1:-}" = "api" ]; then
       if [ -n "${RUNS_DIR:-}" ] && [ -f "$f" ]; then cat "$f"; else printf '[]\n'; fi
       exit 0
       ;;
+    *"/commits/"*)
+      sha="${url#*/commits/}"
+      f="$COMMITS_DIR/$sha.json"
+      if [ -n "${COMMITS_DIR:-}" ] && [ -f "$f" ]; then
+        cat "$f"
+      else
+        echo "mock gh: no commit fixture for $sha" >&2
+        exit 1
+      fi
+      exit 0
+      ;;
     *"/issues/"*"/comments"*)
       n="${url#*/issues/}"
       n="${n%%/comments*}"
@@ -89,7 +101,11 @@ if [ "${1:-}" = "api" ]; then
   exit 1
 fi
 case "${1:-} ${2:-}" in
-  "pr comment" | "pr close" | "pr reopen") exit 0 ;;
+  "pr comment")
+    [ "${FAIL_PR_COMMENT:-}" = "1" ] && exit 1
+    exit 0
+    ;;
+  "pr close" | "pr reopen") exit 0 ;;
 esac
 echo "mock gh: unhandled arguments: $*" >&2
 exit 1
@@ -121,7 +137,7 @@ PR_LIST="$TMP/prs.json"
 
 init_fixtures() { # fresh fixture set for one scenario
   printf '[]\n' > "$PR_LIST"
-  rm -f "$RUNS_DIR"/*.json "$COMMENTS_DIR"/*.json "$FILES_DIR"/*.json 2>/dev/null
+  rm -f "$RUNS_DIR"/*.json "$COMMENTS_DIR"/*.json "$FILES_DIR"/*.json "$COMMITS_DIR"/*.json 2>/dev/null
   export PR_LIST
 }
 
@@ -137,12 +153,29 @@ add_pr() { # add_pr <number> <branch> <created_epoch> <pushed_epoch|-> [labels-c
       created_at: new Date(Number(created) * 1000).toISOString(),
       head: {
         ref: branch,
+        sha: Number(num).toString(16).padStart(40, "0"),
         repo: pushed === "-" ? null : { pushed_at: new Date(Number(pushed) * 1000).toISOString() },
       },
       labels: (labels ? labels.split(",") : []).map((n) => ({ name: n })),
     });
     fs.writeFileSync(file, JSON.stringify(arr, null, 2) + "\n");
   ' "$PR_LIST" "$@"
+}
+
+sha_of() { printf '%040x' "$1"; }
+
+add_commit() { # add_commit <pr-number> <committer_epoch> -- fixture for the PR head commit
+  f="$COMMITS_DIR/$(sha_of "$1").json"
+  node -e '
+    const fs = require("fs");
+    const [file, epoch] = process.argv.slice(1);
+    fs.writeFileSync(file, JSON.stringify({
+      commit: {
+        committer: { date: new Date(Number(epoch) * 1000).toISOString() },
+        author: { date: new Date(Number(epoch) * 1000).toISOString() },
+      },
+    }, null, 2) + "\n");
+  ' "$f" "$2"
 }
 
 add_run() { # add_run <branch> <id> <workflow-path> <status> <conclusion|-> <created_epoch> [started_epoch]
@@ -281,6 +314,7 @@ check "stuck never triggers a close/reopen" no_retrigger 44
 echo "== detection: repair_stalled"
 init_fixtures
 add_pr 45 agent/issue-43 $((NOW - 8 * D)) $((NOW - 2 * D)) agent-failed
+add_commit 45 $((NOW - 2 * D))
 add_run agent/issue-43 9004 .github/workflows/pr-review.yml completed success $((NOW - 2 * D))
 do_scan
 
@@ -288,6 +322,34 @@ check "stalled repair PR gets an alert comment" commented 45
 check "alert names the failure mode" \
   sh -c 'grep -Fq "Failure mode: repair_stalled" "$1"' sh "$BODY_CAPTURE"
 check "stalled repair never triggers a close/reopen" no_retrigger 45
+
+# --- repair_stalled measures branch movement, not repo push activity ----------
+# Audit must-fix #1: head.repo.pushed_at is the REPOSITORY's last-push time
+# (refreshed by a push to any branch, main included), so it can never detect a
+# stalled branch in an active repo. The stall decision must use the PR
+# branch's own head commit time: a repo that was just pushed to must not mask
+# a repair branch that stopped moving.
+
+echo "== detection: repair_stalled tracks the branch head, not repo pushes"
+init_fixtures
+add_pr 53 agent/issue-50 $((NOW - 8 * D)) "$NOW" agent-failed
+add_commit 53 $((NOW - 2 * D))
+add_run agent/issue-50 9010 .github/workflows/pr-review.yml completed success $((NOW - 2 * D))
+do_scan
+
+check "a fresh repo push does not mask a stalled repair branch" commented 53
+check "stall alert still carries the repair_stalled mode" \
+  sh -c 'grep -Fq "Failure mode: repair_stalled" "$1"' sh "$BODY_CAPTURE"
+check "stall decision consults the PR head commit" \
+  sh -c 'grep -q "commits/$(sha_of 53)" "$1"' sh "$GH_LOG"
+
+init_fixtures
+add_pr 54 agent/issue-51 $((NOW - 8 * D)) "$NOW" agent-failed
+add_commit 54 $((NOW - 30 * 60))
+add_run agent/issue-51 9011 .github/workflows/pr-review.yml completed success $((NOW - 30 * 60))
+do_scan
+check "agent-failed PR with a recently moved branch stays healthy" \
+  sh -c '[ "$1" = 0 ] && ! commented 54' sh "$STATUS"
 
 # --- classification priority: a failed review run beats a stalled repair ------
 
@@ -386,6 +448,32 @@ check "a recent re-trigger suppresses a second close/reopen" \
   sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "cooldown suppresses the re-trigger" no_retrigger 43
 check "the alert itself is still due (first of its mode)" commented 43
+
+# --- retrigger only fires after its receipt-carrying alert posted ---------------
+# Audit should-fix #2: the retrigger receipt lives only in the alert comment
+# body. If the alert post fails (or the alert is rate-limited), close+reopen
+# must not run -- otherwise every later scan re-triggers with no cooldown.
+
+echo "== retrigger requires the alert receipt to post"
+init_fixtures
+add_pr 55 agent/issue-52 $((NOW - 2 * H)) $((NOW - 2 * H))
+set_files 55 "README.md"
+FAIL_PR_COMMENT=1
+export FAIL_PR_COMMENT
+do_scan
+unset FAIL_PR_COMMENT
+check "a failed alert post still keeps the scan exit at 0" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "the alert post was attempted" commented 55
+check "a failed alert post suppresses the close+reopen re-trigger" no_retrigger 55
+
+init_fixtures
+add_pr 57 agent/issue-53 $((NOW - 2 * H)) $((NOW - 2 * H))
+set_files 57 "README.md"
+add_comment 57 "github-actions[bot]" $((NOW - 1 * H)) \
+  "alert receipt
+<!-- review-watchdog:mode=no_run pr=57 run=- -->"
+do_scan
+check "an alert rate-limited without a fresh receipt defers the re-trigger" no_mutation
 
 # --- identity configuration via reviewer-identity.sh ---------------------------
 
