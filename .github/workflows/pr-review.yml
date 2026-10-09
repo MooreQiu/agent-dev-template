@@ -193,6 +193,19 @@ jobs:
             ${{ runner.temp }}/reviewer-output.md
           if-no-files-found: error
 
+      # Display channel (issue #55): mirror the verified verdict into
+      # GitHub's native review surface, under the App identity resolved
+      # above, so the PR page shows "Approved" / "Changes requested" next to
+      # green checks instead of a VERDICT:-only comment. Purely display:
+      # derived from the trusted artifact, never read back by the merge
+      # decider; ack/progress comments stay plain comments. Failures here
+      # must not block the merge decision, hence continue-on-error.
+      - name: Surface verdict as native review status
+        if: steps.control.outputs.protected != 'true'
+        continue-on-error: true
+        run: |
+          bash scripts/review-verdict.sh status "${{ github.event.pull_request.number }}"
+
       # Merge decider (AC4, AC5): re-validates the artifact, run identity,
       # live head SHA and gate evidence immediately before merging; squash
       # only, per repo rules; refuses to run outside this workflow.

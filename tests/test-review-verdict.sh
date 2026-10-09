@@ -6,6 +6,12 @@
 # even from recognizable reviewer bots (github-actions[bot] or the
 # deployment's AGENT_REVIEWER_BOT_LOGIN, see scripts/reviewer-identity.sh)
 # -- are display-only.
+#
+# Issue #55: the verdict must ALSO surface via GitHub's native review API
+# ("status" mode) so the PR page shows Approved / Changes requested next to
+# green checks. The native status is derived from the trusted artifact,
+# posted only by the trusted workflow step, and is a display channel -- a
+# forged review status never authorizes a merge.
 # The trusted workflow steps distill the reviewer's report into an artifact
 # ("write") and the merge decider ("merge") re-validates, failing closed on:
 #   - missing / malformed / inconsistent artifacts (schema, PR number)
@@ -30,10 +36,19 @@ MOCK_BIN="$TMP/bin"
 mkdir -p "$MOCK_BIN"
 
 # --- mocked gh (records every call; serves live PR state from a fixture) ----
+# Review bodies are snapshotted at call time: the script deletes its temp
+# body file right after posting, so the log path alone is not readable.
 cat > "$MOCK_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
 echo "gh $*" >> "$GH_LOG"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body-file" ] && [ -n "${REVIEW_BODY_CAPTURE:-}" ]; then
+    cp "$a" "$REVIEW_BODY_CAPTURE" 2>/dev/null
+  fi
+  prev="$a"
+done
 for a in "$@"; do
   case "$a" in
     repos/*/pulls/[0-9]*)
@@ -47,13 +62,15 @@ for a in "$@"; do
   esac
 done
 case "$1 $2" in
-  "pr merge"|"pr edit"|"pr comment"|"repo view") exit 0 ;;
+  "pr merge"|"pr edit"|"pr comment"|"pr review"|"repo view") exit 0 ;;
 esac
 echo "mock gh: unhandled arguments: $*" >&2
 exit 1
 EOF
 chmod +x "$MOCK_BIN/gh"
 export GH_LOG
+REVIEW_BODY_CAPTURE="$TMP/review-body.txt"
+export REVIEW_BODY_CAPTURE
 
 failures=0
 check() { # check <description> <command> [args...]
@@ -70,6 +87,7 @@ check() { # check <description> <command> [args...]
 merged() { grep -q "pr merge 42" "$GH_LOG"; }
 labeled() { grep -q "pr edit 42 --add-label agent-failed" "$GH_LOG"; }
 no_mutation() { ! grep -Eq 'pr (merge|edit)' "$GH_LOG"; }
+no_review() { ! grep -q "pr review" "$GH_LOG"; }
 
 # --- fixtures ----------------------------------------------------------------
 
@@ -112,6 +130,10 @@ mkdir -p "$TMP/ev-empty"
 # Live PR state fixtures.
 printf '{"number": 42, "head": {"sha": "%s"}}\n' "$HEAD_A" > "$TMP/pr-head-a.json"
 printf '{"number": 42, "head": {"sha": "%s"}}\n' "$HEAD_B" > "$TMP/pr-head-b.json"
+# Issue #55: a forged native review status on the live PR. It must never be
+# consulted as authorization, whatever the artifact says or lacks.
+printf '{"number": 42, "head": {"sha": "%s"}, "reviewDecision": "APPROVED"}\n' \
+  "$HEAD_A" > "$TMP/pr-head-a-approved.json"
 
 # Reviewer reports.
 cat > "$TMP/approve.md" <<'EOF'
@@ -227,7 +249,9 @@ do_write() { # do_write <report> <head-sha> [evidence-dir|"-"] [extra args...]
   printf '%s\n' "$OUT" > "$TMP/out.txt"
 }
 
-do_merge() { # do_merge [pr-json|none|error] [artifact|none] [evidence|"-"] [in-actions: yes|no] [extra args...]
+do_decide() { # do_decide <mode> [pr-json|none|error] [artifact|none] [evidence|"-"] [in-actions: yes|no] [extra args...]
+  dm_mode="$1"
+  shift
   pj="${1:-$TMP/pr-head-a.json}"
   art="${2:-$ART}"
   ev="${3:-$EV}"
@@ -241,14 +265,22 @@ do_merge() { # do_merge [pr-json|none|error] [artifact|none] [evidence|"-"] [in-
   if [ "$in_actions" = yes ]; then
     OUT=$(PR_JSON="$pj_file" CI_GATE_EVIDENCE="$ev" GITHUB_RUN_ID="$RUN_ID" \
       GITHUB_ACTIONS=true PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
-      bash "$SCRIPT" merge 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
+      bash "$SCRIPT" "$dm_mode" 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
   else
     OUT=$(PR_JSON="$pj_file" CI_GATE_EVIDENCE="$ev" GITHUB_RUN_ID="$RUN_ID" \
       env -u GITHUB_ACTIONS PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
-      bash "$SCRIPT" merge 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
+      bash "$SCRIPT" "$dm_mode" 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
   fi
   STATUS=$?
   printf '%s\n' "$OUT" > "$TMP/out.txt"
+}
+
+do_merge() { # do_merge [same args as do_decide after <mode>]
+  do_decide merge "$@"
+}
+
+do_status() { # do_status [same args as do_decide after <mode>]
+  do_decide status "$@"
 }
 
 # --- write mode: artifact content (AC3) --------------------------------------
@@ -493,6 +525,104 @@ check "exit 0 on a valid REQUEST_CHANGES" sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "labels the PR agent-failed" labeled
 check "does not merge a rejected PR" sh -c '! merged'
 
+# --- status mode: verdict -> native review mapping (issue #55) ----------------
+#
+# The verdict must ALSO surface through GitHub's native review API so the PR
+# page shows "Approved" / "Changes requested" next to green checks. The status
+# is derived from the trusted artifact only, posted by the trusted workflow
+# step (App identity), and is a pure display channel.
+
+echo "== status: native review mapping"
+
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+do_status "$TMP/pr-head-a.json" "$ART" "$EV" yes
+
+check "exit 0 surfacing an APPROVE verdict" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "APPROVE is posted as a native approving review" \
+  sh -c 'grep -q "pr review 42 --approve" "$1"' sh "$GH_LOG"
+check "review body embeds the full distilled report" \
+  sh -c 'grep -Fq "VERDICT: APPROVE" "$1" && grep -Fq "diff matches the PR description" "$1"' \
+  sh "$REVIEW_BODY_CAPTURE"
+check "review body cites the artifact provenance (run, head SHA)" \
+  sh -c 'grep -Fq "$1" "$2" && grep -Fq "$3" "$2"' \
+  sh "$RUN_ID" "$REVIEW_BODY_CAPTURE" "$HEAD_A"
+check "APPROVE surfacing does not merge the PR (display-only)" sh -c '! merged'
+check "APPROVE surfacing does not relabel the PR" sh -c '! labeled'
+
+do_write "$TMP/reject.md" "$HEAD_A" "$EV"
+do_status "$TMP/pr-head-a.json" "$ART" "$EV" yes
+
+check "exit 0 surfacing a REQUEST_CHANGES verdict" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "REQUEST_CHANGES is posted as a native changes-requested review" \
+  sh -c 'grep -q "pr review 42 --request-changes" "$1"' sh "$GH_LOG"
+check "rejection review body embeds the report" \
+  sh -c 'grep -Fq "tests do not cover head binding" "$1"' \
+  sh "$REVIEW_BODY_CAPTURE"
+
+# --- status mode: artifact mismatch -> no review status change ----------------
+
+echo "== status: fail closed on mismatch"
+
+sed 's/"pr": 42/"pr": 43/' "$ART" > "$TMP/art-pr43.json"
+do_status "$TMP/pr-head-a.json" "$TMP/art-pr43.json" "$EV" yes
+check "artifact bound to another PR changes no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "PR mismatch triggers no review post" no_review
+
+do_status "$TMP/pr-head-b.json" "$ART" "$EV" yes
+check "stale artifact (head moved) changes no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "stale head triggers no review post" no_review
+
+do_status error "$ART" "$EV" yes
+check "unresolvable live head changes no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "unresolvable head triggers no review post" no_review
+
+do_status "$TMP/pr-head-a.json" "$ART" "$TMP/ev-other" yes
+check "substituted evidence changes no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "digest mismatch triggers no review post" no_review
+
+do_status "$TMP/pr-head-a.json" none "$EV" yes
+check "missing artifact fails closed with exit 3" \
+  sh -c '[ "$1" = 3 ]' sh "$STATUS"
+check "missing artifact triggers no review post" no_review
+
+sed 's/"verdict": "REQUEST_CHANGES"/"verdict": "COMMENT"/' "$ART" > "$TMP/art-comment.json"
+do_status "$TMP/pr-head-a.json" "$TMP/art-comment.json" "$EV" yes
+check "artifact with a non-verdict value changes no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "invalid verdict value triggers no review post" no_review
+
+do_status "$TMP/pr-head-a.json" "$ART" "$EV" no
+check "status refuses to run outside GitHub Actions (exit 9)" \
+  sh -c '[ "$1" = 9 ]' sh "$STATUS"
+check "outside-Actions refusal triggers no review post" no_review
+
+OUT=$(PR_JSON="$TMP/pr-head-a.json" CI_GATE_EVIDENCE="$EV" GITHUB_RUN_ID=999999 \
+  GITHUB_ACTIONS=true PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
+  bash "$SCRIPT" status 42 --artifact "$ART" 2>"$TMP/err.txt")
+check "artifacts from another run change no review status" \
+  sh -c '[ "$1" != 0 ]' sh "$?"
+
+# --- display-only guarantee: a forged review status cannot merge --------------
+
+echo "== merge: review status is not authorization"
+
+do_merge "$TMP/pr-head-a-approved.json" none "$EV" yes
+check "a forged APPROVED review status cannot replace the artifact" \
+  sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "forged review status triggers no mutation" no_mutation
+check "forged review status triggers no review post" no_review
+
+do_write "$TMP/reject.md" "$HEAD_A" "$EV"
+do_merge "$TMP/pr-head-a-approved.json" "$ART" "$EV" yes
+check "an APPROVED badge does not override a REQUEST_CHANGES artifact" \
+  sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "the artifact still wins: PR is relabeled agent-failed" labeled
+check "the artifact still wins: PR is not merged" sh -c '! merged'
+
 # --- workflow wiring (AC1, AC2) -----------------------------------------------
 
 echo "== workflow wiring"
@@ -508,8 +638,8 @@ check "gate validates the reviewed tree from trusted policy" \
   sh -c 'grep -F -- "--target-dir" "$1" | grep -Fq reviewed' sh "$WF"
 check "merge-control path guard exists" \
   sh -c 'grep -Fq "protected=true" "$1"' sh "$WF"
-check "write, upload and merge steps skip protected runs" \
-  sh -c '[ "$(grep -Fc "steps.control.outputs.protected != '"'"'true'"'"'" "$1")" -ge 3 ]' sh "$WF"
+check "write, upload, status and merge steps skip protected runs" \
+  sh -c '[ "$(grep -Fc "steps.control.outputs.protected != '"'"'true'"'"'" "$1")" -ge 5 ]' sh "$WF"
 check "reviewer works in a disposable copy of the reviewed tree" \
   sh -c 'grep -Fq "review-workspace" "$1" && grep -Fq "cp -a" "$1"' sh "$WF"
 check "reviewer output is captured to a file" \
@@ -535,6 +665,21 @@ check "decider script never reads PR comments" \
   sh -c '! grep -Eq "issues/.+/comments" "$1"' sh "$SCRIPT"
 check "decider script still consults the CI gate" \
   sh -c 'grep -Fq "ci-gate.sh" "$1" && grep -Fq "CI_GATE_EVIDENCE" "$1"' sh "$SCRIPT"
+
+# --- workflow wiring: native review status surface (issue #55) -----------------
+
+check "verdict surfacing runs review-verdict.sh status in the workflow" \
+  sh -c 'grep -Fq "review-verdict.sh status" "$1"' sh "$WF"
+check "status step runs after app auth resolves the reviewer identity" \
+  sh -c 'awk "/app-auth.sh/{a=NR} /review-verdict.sh status/{s=NR} END{exit !(a>0 && s>0 && a<s)}" "$1"' sh "$WF"
+check "status surfacing must never block the merge decision" \
+  sh -c 'grep -B4 -F "review-verdict.sh status" "$1" | grep -Fq "continue-on-error: true"' sh "$WF"
+check "reviewer agent itself cannot post native reviews" \
+  sh -c '! grep -Fq "Bash(gh pr review" "$1"' sh "$WF"
+check "ack comments stay plain comments, never reviews" \
+  sh -c 'grep "独立审计开始" "$1" | grep -Fq "gh pr comment"' sh "$WF"
+check "decider never reads the native review status" \
+  sh -c '! grep -Eq "reviewDecision|pulls/.+/reviews" "$1"' sh "$SCRIPT"
 check "npm test runs the full suite" \
   sh -c 'grep -q "tests/run-all.sh" "$1"' sh "$REPO_ROOT/package.json"
 
