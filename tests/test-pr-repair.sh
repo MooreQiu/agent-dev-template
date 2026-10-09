@@ -695,6 +695,52 @@ check "default repair prompt announces the automatic re-review" \
 check "repair artifacts are ignored by git" \
   grep -Fq '.agent/repair/' "$REPO_ROOT/.gitignore"
 
+# ===========================================================================
+# issue #75: dispatch failures must be diagnosable, not swallowed
+# ===========================================================================
+echo "== dispatch: diagnosable failures (issue #75)"
+
+# The first real repair run (agent-sweep run 37972083041) died with
+# "cannot resolve PR" and no reason: the gh stderr was discarded, so the
+# actual outage (token, API, or a bad queue entry) was invisible -- and
+# the sweep job still reported success. Failures on the queue -> dispatch
+# path must stay loud end to end.
+
+# gh's own error text must reach the repair error message.
+make_fixture loud
+make_rejected_pr loud 82 19
+dispatch loud 404 -- true > "$WORK/loud/unresolved.out" 2>&1
+check "an unresolvable PR fails the dispatch" test $? -ne 0
+check "the gh failure reason reaches the repair error message" \
+  sh -c 'grep -Fq "no pull request 404" "$1"' sh "$WORK/loud/unresolved.out"
+
+# scan output is dispatch input: only bare numbers may pass, anything
+# else is skipped with a logged reason instead of failing `gh pr view`.
+make_fixture sanitize
+cat > "$GH_STATE/pr-list.json" <<'EOF'
+[
+  {"number": 21, "headRefName": "agent/issue-90"},
+  {"number": 1.5, "headRefName": "agent/issue-91"},
+  {"number": 22, "headRefName": "feature/human"}
+]
+EOF
+SCAN_RAW="$( cd "$WORK/sanitize/runner" && bash scripts/pr-repair.sh scan 2>"$WORK/sanitize/scan.err" )"
+check "scan emits only bare numbers" \
+  sh -c 'printf "%s\n" "$1" | grep -Fxq 21' sh "$SCAN_RAW"
+check "scan drops non-numeric queue entries" \
+  sh -c '! printf "%s\n" "$1" | grep -Fq "1.5"' sh "$SCAN_RAW"
+check "scan logs why a queue entry was skipped" \
+  sh -c 'grep -Fq "1.5" "$1"' sh "$WORK/sanitize/scan.err"
+
+# The sweep loop must re-validate dispatch input and must not swallow a
+# failed dispatch: the job has to end non-zero so monitoring can page.
+check "sweep re-validates scan entries as bare numbers before dispatch" \
+  grep -Fq 'non-numeric entry' "$SWEEP"
+check "a failed repair dispatch fails the sweep job" \
+  grep -Fq 'REPAIR_FAILED=1' "$SWEEP"
+check "the sweep failure is announced as an error annotation" \
+  sh -c 'grep -Fq "::error::" "$1" && grep -Fq "repair dispatch failed" "$1"' sh "$SWEEP"
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures test(s) failed"
