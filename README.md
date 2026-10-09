@@ -160,9 +160,9 @@ Every PR from an `agent/*` branch gets two independent checks in the *PR Review*
 1. a **deterministic CI gate** (build/test/lint/typecheck from `.agent/project.json`, plus test-first evidence for code changes) that blocks merging on failure, and
 2. an **independent peer audit** by a second agent with no shared context with the author.
 
-The verdict is the first line of the audit comment: `VERDICT: APPROVE` triggers squash-merge and branch deletion; `VERDICT: REQUEST_CHANGES` relabels the PR `agent-failed` and returns the issue to the queue. Only an exact-allowlisted bot's verdict counts -- human or unknown-bot comments never merge anything, and a missing verdict fails closed (no merge, no side effects).
+The audit report is data, not authority: the workflow distills it into a structured verdict artifact bound to the PR number, the exact reviewed head SHA, the review run's identity, and a digest of the CI-gate evidence. The audit comment (its first line is `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`) is a display copy -- bot comments never authorize a merge, whoever wrote them. `VERDICT: APPROVE` triggers squash-merge and branch deletion; `VERDICT: REQUEST_CHANGES` relabels the PR `agent-failed` and returns the issue to the queue. Right before merging, the decider re-validates the artifact, the gate evidence, and an unchanged head against the live PR; anything missing, stale, or inconsistent fails closed (no merge, no side effects). PRs that modify the merge-control path (`pr-review.yml`, `scripts/ci-gate.sh`, `scripts/app-auth.sh`, `scripts/review-verdict.sh`) are reviewed with the base revision's controls and skip auto-merge entirely -- a human merges them.
 
-A green *PR Review* run is not approval: it only proves the audit completed. Approval is exclusively the verdict line above, so read the audit body before relying on a result; you can always review and merge yourself.
+A green *PR Review* run is not approval: it only proves the audit completed. Approval is exclusively the re-verified APPROVE verdict described above, so read the audit body before relying on a result; you can always review and merge yourself.
 
 ## Model and effort configuration
 
@@ -213,7 +213,7 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 | Project runtime config | `.agent/project.json` | Machine-readable single source for build/test commands |
 | Dispatch | `.github/workflows/claude.yml` | `@claude` comment / assignment trigger |
 | Scheduler + nightly sweep | `agent-scheduler.yml`, `agent-sweep.yml` | Dependency- and priority-aware queue advance, lease reconciliation |
-| Peer review + auto-merge | `.github/workflows/pr-review.yml`, `scripts/review-verdict.sh` | CI gate, independent audit, verdict-driven merge |
+| Peer review + auto-merge | `.github/workflows/pr-review.yml`, `scripts/review-verdict.sh` | Audit distilled into a verdict artifact bound to the PR, reviewed head SHA, and review run (bot comments are display-only); the merge decider re-checks gate evidence and an unchanged head before squash merge; merge-control-path PRs merge manually |
 | CI gate | `.github/workflows/ci.yml`, `scripts/ci-gate.sh` | Deterministic quality gate + test-first evidence |
 | Claim protocol | `scripts/agent-claim.sh` | Atomic claims with owner and lease |
 | Model resolution | `scripts/model-config.sh` | Comment override > repo vars > fallback |
