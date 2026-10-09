@@ -163,6 +163,10 @@ make_fixture() { # make_fixture <name>
   git -C "$d/origin/origin.git" symbolic-ref HEAD refs/heads/main
   cp "$CLAIM" "$d/src/scripts/agent-claim.sh"
   cp "$TASK" "$d/src/scripts/agent-task.sh"
+  # Budget engine rides along so the fixture pipeline matches production
+  # (issue #22); defaults apply because no budgets.json is committed.
+  BUDGET_SCRIPT="$REPO_ROOT/scripts/agent-budget.sh"
+  [ -f "$BUDGET_SCRIPT" ] && cp "$BUDGET_SCRIPT" "$d/src/scripts/agent-budget.sh"
   cat > "$d/src/tests/run-all.sh" <<'RUN'
 #!/bin/sh
 set -u

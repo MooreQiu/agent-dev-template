@@ -34,6 +34,9 @@
 # not the owner).
 set -u
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUDGET="$SELF_DIR/agent-budget.sh"
+
 REMOTE="${AGENT_CLAIM_REMOTE:-origin}"
 DEFAULT_LEASE="${AGENT_LEASE_SECONDS:-10800}"
 
@@ -271,6 +274,27 @@ cmd_status() {
 
 # --- reconcile ----------------------------------------------------------------
 
+# Repair-round budgeting (issue #22): every reconcile-driven requeue
+# (expired lease, vanished PR) increments the durable repair counter;
+# once it reaches max_repair_rounds the task is blocked for human review
+# instead of being requeued into another autonomous failure loop.
+repair_budget_exhausted() { # repair_budget_exhausted <key> -> rc 0 when blocked
+  [ -x "$BUDGET" ] || return 1
+  bash "$BUDGET" record "$1" --field repair_rounds=+1 >/dev/null 2>&1 || return 1
+  rounds="$(bash "$BUDGET" show "$1" 2>/dev/null | sed -n 's/.*"repair_rounds":\([0-9][0-9]*\).*/\1/p')"
+  max="$(bash "$BUDGET" limit max_repair_rounds 2>/dev/null)" || max=""
+  [ -n "$rounds" ] && [ -n "$max" ] && [ "$rounds" -ge "$max" ]
+}
+
+announce_repair_blocked() { # announce_repair_blocked <key>
+  gh issue edit "$1" --remove-label agent-claimed >/dev/null 2>&1 || true
+  gh issue edit "$1" --add-label blocked >/dev/null 2>&1 || true
+  if [ -x "$BUDGET" ]; then
+    gh issue comment "$1" --body "$(bash "$BUDGET" summary "$1" 2>/dev/null)" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
 issue_state() { # issue_state <key> -> OPEN/CLOSED/unknown
   gh issue view "$1" --json state 2>/dev/null | sed -n 's/.*"state":"\([^"]*\)".*/\1/p'
 }
@@ -294,9 +318,14 @@ cmd_reconcile() {
         repaired=$((repaired + 1))
         printf 'reconcile: released expired claim %s (owner %s)\n' "$key" "$(jstr "$current" owner)"
         if is_numeric_key "$key" && command -v gh >/dev/null 2>&1; then
-          gh issue edit "$key" --remove-label agent-claimed >/dev/null 2>&1 || true
-          gh issue edit "$key" --add-label agent-failed >/dev/null 2>&1 || true
-          gh issue comment "$key" --body "Lease for automated work expired before completion; claim released and task requeued (see Actions logs)." >/dev/null 2>&1 || true
+          if repair_budget_exhausted "$key"; then
+            announce_repair_blocked "$key"
+            printf 'reconcile: repair budget exhausted for %s; blocked for human review\n' "$key"
+          else
+            gh issue edit "$key" --remove-label agent-claimed >/dev/null 2>&1 || true
+            gh issue edit "$key" --add-label agent-failed >/dev/null 2>&1 || true
+            gh issue comment "$key" --body "Lease for automated work expired before completion; claim released and task requeued (see Actions logs)." >/dev/null 2>&1 || true
+          fi
         fi
       fi
       continue
@@ -317,9 +346,14 @@ cmd_reconcile() {
           repaired=$((repaired + 1))
           gh issue edit "$key" --remove-label agent-claimed >/dev/null 2>&1 || true
           if [ "$requeue" -eq 1 ]; then
-            gh issue edit "$key" --add-label agent-failed >/dev/null 2>&1 || true
-            gh issue comment "$key" --body "Claimed work reported success but its pull request is gone; task requeued for another run." >/dev/null 2>&1 || true
-            printf 'reconcile: requeued %s (PR missing, issue open)\n' "$key"
+            if repair_budget_exhausted "$key"; then
+              announce_repair_blocked "$key"
+              printf 'reconcile: repair budget exhausted for %s (PR missing); blocked for human review\n' "$key"
+            else
+              gh issue edit "$key" --add-label agent-failed >/dev/null 2>&1 || true
+              gh issue comment "$key" --body "Claimed work reported success but its pull request is gone; task requeued for another run." >/dev/null 2>&1 || true
+              printf 'reconcile: requeued %s (PR missing, issue open)\n' "$key"
+            fi
           else
             printf 'reconcile: cleaned succeeded claim %s (issue closed)\n' "$key"
           fi

@@ -107,6 +107,10 @@ jobs:
               echo "issue #$N 处理完成且产物核验通过，PR 待 review"
             elif [ "$rc" -eq 3 ]; then
               echo "issue #$N 已被其他 worker 持有认领，跳过"
+            elif [ "$rc" -eq 6 ]; then
+              echo "issue #$N 预算耗尽（rc=6）；已按 .agent/budgets.json 停止，阻断/重排见 issue 上的 summary"
+            elif [ "$rc" -eq 7 ]; then
+              echo "issue #$N 被人工暂停/取消（rc=7），跳过"
             else
               echo "issue #$N 失败（rc=$rc）；认领已释放并标记 agent-failed，见上方 task-outcome"
             fi

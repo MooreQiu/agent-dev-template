@@ -270,13 +270,20 @@ for wf in claude.yml agent-sweep.yml pr-review.yml; do
   fi
 done
 
-# Verdict lookup moved from pr-review.yml into scripts/review-verdict.sh
-# (main's architecture); it must recognize the App bot login so auto-merge
-# keeps working once the App is configured (issue #13).
-grep -Fq 'mooreqiu-agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
-  && pass "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
-  || fail "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
-    "scripts/review-verdict.sh does not allowlist mooreqiu-agent-dev-bot[bot]"
+# Since issue #19 the merge decision consumes the structured verdict artifact,
+# not comments; the reviewer bot identity is per-deployment configuration
+# (issue #36: AGENT_REVIEWER_BOT_LOGIN, resolved by scripts/reviewer-identity.sh)
+# so any display/filtering of audit-trail comments follows the deployment's
+# own App, with github-actions[bot] as the fail-closed default. No fixed App
+# name may be hardcoded: GitHub App names are globally unique.
+grep -Fq 'AGENT_REVIEWER_BOT_LOGIN' "$REPO_ROOT/scripts/review-verdict.sh" \
+  && pass "reviewer identity documented as variable-driven (comments are display-only since #19)" \
+  || fail "reviewer identity documented as variable-driven (comments are display-only since #19)" \
+    "scripts/review-verdict.sh does not reference AGENT_REVIEWER_BOT_LOGIN"
+grep -Fq 'github-actions[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
+  && pass "fail-closed default reviewer identity still documented" \
+  || fail "fail-closed default reviewer identity still documented" \
+    "scripts/review-verdict.sh does not mention the github-actions[bot] fallback"
 
 # --- AC: setup runbook + smoke test documentation ---
 contains() { # contains <fixed string> <description>
@@ -294,14 +301,28 @@ if [ -f "$DOCS" ]; then
   grep -Eqi 'smoke|端到端' "$DOCS" \
     && pass "runbook documents the end-to-end smoke test" \
     || fail "runbook documents the end-to-end smoke test"
-  grep -Eq '必须.{0,6}mooreqiu-agent-dev-bot|mooreqiu-agent-dev-bot.{0,30}必须' "$DOCS" \
-    && pass "runbook pins the App name to mooreqiu-agent-dev-bot (not arbitrary)" \
-    || fail "runbook pins the App name to mooreqiu-agent-dev-bot (not arbitrary)" \
-      "name must be documented as mandatory"
-  grep -Eq 'review-verdict|allowlist' "$DOCS" \
-    && pass "runbook explains why the App name is fixed" \
-    || fail "runbook explains why the App name is fixed" \
-      "no mention of the verdict allowlist dependency"
+  grep -Fq 'AGENT_REVIEWER_BOT_LOGIN' "$DOCS" \
+    && pass "runbook documents the AGENT_REVIEWER_BOT_LOGIN variable" \
+    || fail "runbook documents the AGENT_REVIEWER_BOT_LOGIN variable" \
+      "variable must replace the fixed App name (issue #36)"
+  grep -Eq '\[bot\]' "$DOCS" \
+    && pass "runbook explains the <slug>[bot] login derivation" \
+    || fail "runbook explains the <slug>[bot] login derivation" \
+      "expected guidance to set the variable to <slug>[bot]"
+  grep -Eq 'gh variable set AGENT_REVIEWER_BOT_LOGIN' "$DOCS" \
+    && pass "runbook shows the gh variable set command" \
+    || fail "runbook shows the gh variable set command" \
+      "expected a copy-paste configuration command"
+  if grep -Eq '必须.{0,6}(精确|使用).{0,10}(mooreqiu-)?agent-dev-bot|agent-dev-bot.{0,30}必须' "$DOCS"; then
+    fail "runbook no longer demands a globally-unique fixed App name" \
+      "App names are site-wide unique; the runbook must allow any name"
+  else
+    pass "runbook no longer demands a globally-unique fixed App name"
+  fi
+  grep -Eq 'review-verdict|reviewer-identity|allowlist' "$DOCS" \
+    && pass "runbook explains how the bot login is consumed" \
+    || fail "runbook explains how the bot login is consumed" \
+      "no mention of the reviewer identity allowlist"
 
   # --- AC from issue #32: Workflows permission pinned in the runbook ---
   grep -Eq '\|[[:space:]]*Workflows[[:space:]]*\|[[:space:]]*Read & write' "$DOCS" \

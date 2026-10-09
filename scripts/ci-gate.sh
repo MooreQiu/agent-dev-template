@@ -17,19 +17,25 @@
 # CI_GATE_EVIDENCE) and refuses to merge on anything but accepted evidence.
 #
 # Usage:
-#   scripts/ci-gate.sh run   [--evidence-dir DIR] [--base REF]
-#   scripts/ci-gate.sh check [--evidence-dir DIR]
+#   scripts/ci-gate.sh run   [--evidence-dir DIR] [--base REF] [--target-dir DIR]
+#   scripts/ci-gate.sh check [--evidence-dir DIR] [--target-dir DIR]
 #
-#   run    Execute every configured command (cwd is forced to the repository
-#          root), capture each command's output and exit code under DIR
-#          (default .ci-evidence), and evaluate test-first evidence for the
-#          commit range BASE..HEAD. Exit 0 only when every executed command
-#          succeeds and the evidence is complete.
+#   run    Execute every configured command (cwd is forced to the target dir,
+#          default: the script's own repository root), capture each command's
+#          output and exit code under DIR (default .ci-evidence), and evaluate
+#          test-first evidence for the commit range BASE..HEAD. Exit 0 only
+#          when every executed command succeeds and the evidence is complete.
 #   check  Verify an existing evidence artifact without re-running commands:
 #          every required check (test, plus install/build/lint/typecheck when
 #          configured) needs a record with exit 0 and a non-empty log, and
 #          the test-first evidence must be accepted. Used by the merge
 #          controller before merging.
+#
+#   --target-dir DIR  Validate a different working tree (the reviewed PR
+#          checkout) while keeping THIS script's revision as the trusted
+#          policy source: the command set is always read from the
+#          .agent/project.json next to this script (issue #19: PR-supplied
+#          policy changes are review input, not authoritative control).
 #
 # Evidence layout (one JSON record per line, parsed with sed only):
 #   gate.json        {"checks": [{"name", "command", "exit", "log"}, ...]}
@@ -41,13 +47,15 @@ set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+# Policy source: always the revision this script was checked out from, never
+# the --target-dir tree under review (issue #19).
 PROJECT_FILE="$REPO_ROOT/.agent/project.json"
 
 usage() {
   cat >&2 <<'EOF'
 Usage: scripts/ci-gate.sh <mode> [options]
-  run   [--evidence-dir DIR] [--base REF]   run the gate, produce evidence
-  check [--evidence-dir DIR]                verify existing evidence only
+  run   [--evidence-dir DIR] [--base REF] [--target-dir DIR]  run the gate
+  check [--evidence-dir DIR] [--target-dir DIR]               verify evidence
 EOF
   exit 2
 }
@@ -61,6 +69,7 @@ shift
 
 EVIDENCE="$REPO_ROOT/.ci-evidence"
 BASE=""
+TARGET="$REPO_ROOT"
 while [ $# -gt 0 ]; do
   case "$1" in
     --evidence-dir)
@@ -73,15 +82,24 @@ while [ $# -gt 0 ]; do
       BASE="$2"
       shift 2
       ;;
+    --target-dir)
+      [ $# -ge 2 ] || usage
+      TARGET="$2"
+      shift 2
+      ;;
     *) usage ;;
   esac
 done
 
-# Resolve a relative evidence dir against the invocation directory before
-# any cd changes the meaning of relative paths.
+# Resolve relative dirs against the invocation directory before any cd
+# changes the meaning of relative paths.
 case "$EVIDENCE" in
   /*) ;;
   *) EVIDENCE="$(pwd)/$EVIDENCE" ;;
+esac
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$(pwd)/$TARGET" ;;
 esac
 
 # --- minimal JSON access (same controlled format as bootstrap-env.sh) -------
@@ -113,7 +131,7 @@ required_checks() { # required check names, one per line
 suite_exit_at() { # suite_exit_at <sha> -> exit code of the configured test command at that commit
   wt="$(mktemp -d "${TMPDIR:-/tmp}/ci-gate-wt.XXXXXX")"
   rmdir "$wt"
-  if ! git -C "$REPO_ROOT" worktree add --detach "$wt" "$1" >/dev/null 2>&1; then
+  if ! git -C "$TARGET" worktree add --detach "$wt" "$1" >/dev/null 2>&1; then
     printf 'worktree unavailable for %s\n' "$1" >> "$EVIDENCE/test-first.log"
     return 200
   fi
@@ -131,14 +149,14 @@ suite_exit_at() { # suite_exit_at <sha> -> exit code of the configured test comm
   else
     printf 'no test command configured at %s\n' "$1" >> "$EVIDENCE/test-first.log"
   fi
-  git -C "$REPO_ROOT" worktree remove --force "$wt" >/dev/null 2>&1
-  git -C "$REPO_ROOT" worktree prune >/dev/null 2>&1
+  git -C "$TARGET" worktree remove --force "$wt" >/dev/null 2>&1
+  git -C "$TARGET" worktree prune >/dev/null 2>&1
   return "$red"
 }
 
 if [ "$MODE" = run ]; then
   # ------------------------------------------------------------- run mode ---
-  cd "$REPO_ROOT" || { echo "gate: FAIL cannot enter $REPO_ROOT" >&2; exit 1; }
+  cd "$TARGET" || { echo "gate: FAIL cannot enter $TARGET" >&2; exit 1; }
   mkdir -p "$EVIDENCE" \
     || { echo "gate: FAIL cannot create evidence dir $EVIDENCE" >&2; exit 1; }
   rm -f "$EVIDENCE/gate.json" "$EVIDENCE/test-first.json"
@@ -169,7 +187,7 @@ if [ "$MODE" = run ]; then
   printf '\n  ]\n}\n' >> "$EVIDENCE/gate.json"
 
   # ------------------------------------------------- test-first evaluation --
-  HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" || HEAD_SHA=""
+  HEAD_SHA="$(git -C "$TARGET" rev-parse HEAD 2>/dev/null)" || HEAD_SHA=""
 
   tf_write() { # tf_write <status> [extra fields: "key": "value", ...]
     st="$1"
@@ -190,11 +208,11 @@ if [ "$MODE" = run ]; then
     # No base ref: the command gate still ran, but the artifact is not
     # acceptable merge evidence (check rejects the no-base status).
     tf_write no-base
-  elif ! fork="$(git -C "$REPO_ROOT" merge-base "$BASE" HEAD 2>/dev/null)"; then
+  elif ! fork="$(git -C "$TARGET" merge-base "$BASE" HEAD 2>/dev/null)"; then
     tf_write failed '"reason": "invalid-base"'
     tf_ok=0
   else
-    base_sha="$(git -C "$REPO_ROOT" rev-parse "$BASE" 2>/dev/null || printf '%s' "$BASE")"
+    base_sha="$(git -C "$TARGET" rev-parse "$BASE" 2>/dev/null || printf '%s' "$BASE")"
     code_changed=0
     tests_changed=0
     while IFS= read -r f; do
@@ -205,7 +223,7 @@ if [ "$MODE" = run ]; then
         .gitignore|LICENSE|LICENSE.*) ;;
         *) code_changed=1 ;;
       esac
-    done < <(git -C "$REPO_ROOT" diff --name-only "$fork" HEAD 2>/dev/null)
+    done < <(git -C "$TARGET" diff --name-only "$fork" HEAD 2>/dev/null)
 
     if [ "$code_changed" -eq 0 ]; then
       tf_write no-code-change "\"base\": \"$base_sha\""
@@ -216,7 +234,7 @@ if [ "$MODE" = run ]; then
       red_commit=""
       wt_error=0
       : > "$EVIDENCE/test-first.log"
-      for sha in $(git -C "$REPO_ROOT" rev-list --reverse "$fork..HEAD" 2>/dev/null); do
+      for sha in $(git -C "$TARGET" rev-list --reverse "$fork..HEAD" 2>/dev/null); do
         touched=0
         while IFS= read -r p; do
           case "$p" in tests/*) touched=1 ;; esac
@@ -300,8 +318,8 @@ else
     verified)
       red="$(sed -n 's/.*"red_commit": "\([^"]*\)".*/\1/p' "$tf" | sed -n 1p)"
       if [ -z "$red" ] \
-        || ! git -C "$REPO_ROOT" rev-parse --verify --quiet "$red^{commit}" >/dev/null 2>&1 \
-        || ! git -C "$REPO_ROOT" merge-base --is-ancestor "$red" HEAD >/dev/null 2>&1; then
+        || ! git -C "$TARGET" rev-parse --verify --quiet "$red^{commit}" >/dev/null 2>&1 \
+        || ! git -C "$TARGET" merge-base --is-ancestor "$red" HEAD >/dev/null 2>&1; then
         fail_msg "test-first red_commit is not resolvable in this repository"
       fi
       ;;
