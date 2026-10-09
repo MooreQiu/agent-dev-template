@@ -273,10 +273,10 @@ done
 # Verdict lookup moved from pr-review.yml into scripts/review-verdict.sh
 # (main's architecture); it must recognize the App bot login so auto-merge
 # keeps working once the App is configured (issue #13).
-grep -Fq 'agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
-  && pass "verdict lookup accepts the App bot (agent-dev-bot[bot])" \
-  || fail "verdict lookup accepts the App bot (agent-dev-bot[bot])" \
-    "scripts/review-verdict.sh does not allowlist agent-dev-bot[bot]"
+grep -Fq 'mooreqiu-agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
+  && pass "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
+  || fail "verdict lookup accepts the App bot (mooreqiu-agent-dev-bot[bot])" \
+    "scripts/review-verdict.sh does not allowlist mooreqiu-agent-dev-bot[bot]"
 
 # --- AC: setup runbook + smoke test documentation ---
 contains() { # contains <fixed string> <description>
@@ -294,9 +294,9 @@ if [ -f "$DOCS" ]; then
   grep -Eqi 'smoke|端到端' "$DOCS" \
     && pass "runbook documents the end-to-end smoke test" \
     || fail "runbook documents the end-to-end smoke test"
-  grep -Eq '必须.{0,6}agent-dev-bot|agent-dev-bot.{0,30}必须' "$DOCS" \
-    && pass "runbook pins the App name to agent-dev-bot (not arbitrary)" \
-    || fail "runbook pins the App name to agent-dev-bot (not arbitrary)" \
+  grep -Eq '必须.{0,6}mooreqiu-agent-dev-bot|mooreqiu-agent-dev-bot.{0,30}必须' "$DOCS" \
+    && pass "runbook pins the App name to mooreqiu-agent-dev-bot (not arbitrary)" \
+    || fail "runbook pins the App name to mooreqiu-agent-dev-bot (not arbitrary)" \
       "name must be documented as mandatory"
   grep -Eq 'review-verdict|allowlist' "$DOCS" \
     && pass "runbook explains why the App name is fixed" \

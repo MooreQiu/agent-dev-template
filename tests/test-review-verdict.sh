@@ -13,7 +13,7 @@
 #
 # Extended for issue #13: when the workflow resolves GitHub App auth
 # (scripts/app-auth.sh, docs/GITHUB_APP_SETUP.md) the verdict comment comes
-# from the App bot "agent-dev-bot[bot]". The lookup accepts an EXACT allowlist
+# from the App bot "mooreqiu-agent-dev-bot[bot]". The lookup accepts an EXACT allowlist
 # of the two reviewer logins; unknown bots and humans stay ignored so no
 # third-party app comment can ever drive a merge.
 set -u
@@ -121,11 +121,11 @@ cat > "$TMP/malformed.json" <<'EOF'
 EOF
 
 # The workflow resolved GitHub App auth, so its comments come from the App
-# bot "agent-dev-bot[bot]". Decoys: human, unknown app bot, and an earlier
+# bot "mooreqiu-agent-dev-bot[bot]". Decoys: human, unknown app bot, and an earlier
 # start notice from the GITHUB_TOKEN fallback login.
 cat > "$TMP/app-bot.json" <<'EOF'
 [
-  {"id": 504, "user": {"login": "agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: APPROVE — verified with the App installation token"},
+  {"id": 504, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: APPROVE — verified with the App installation token"},
   {"id": 503, "user": {"login": "MooreQiu", "type": "User"}, "body": "VERDICT: APPROVE from a human"},
   {"id": 502, "user": {"login": "other-app[bot]", "type": "Bot"}, "body": "VERDICT: APPROVE from another app"},
   {"id": 501, "user": {"login": "github-actions[bot]", "type": "Bot"}, "body": "🤖 独立审计开始（peer review，与作者零上下文共享）。"}
@@ -135,8 +135,8 @@ EOF
 # The App bot can also deliver REQUEST_CHANGES; it must drive the label path.
 printf '%s\n' \
 '[' \
-'  {"id": 602, "user": {"login": "agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: REQUEST_CHANGES — blocking:\n- merge dropped the fix"},' \
-'  {"id": 601, "user": {"login": "agent-dev-bot[bot]", "type": "Bot"}, "body": "🤖 独立审计开始（peer review，与作者零上下文共享）。"}' \
+'  {"id": 602, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "VERDICT: REQUEST_CHANGES — blocking:\n- merge dropped the fix"},' \
+'  {"id": 601, "user": {"login": "mooreqiu-agent-dev-bot[bot]", "type": "Bot"}, "body": "🤖 独立审计开始（peer review，与作者零上下文共享）。"}' \
 ']' > "$TMP/app-bot-reject.json"
 
 # --- AC: APPROVE path returns the verdict body and merges ------------------
@@ -238,7 +238,7 @@ check "pr-review.yml auto-merge step runs review-verdict.sh" \
 check "old GraphQL lookup removed from pr-review.yml" \
   sh -c '! grep -q "gh pr view.*--json comments" "$1"' sh "$WF"
 check "verdict lookup allowlists the App bot login exactly" \
-  sh -c 'grep -Fq "agent-dev-bot[bot]" "$1"' sh "$SCRIPT"
+  sh -c 'grep -Fq "mooreqiu-agent-dev-bot[bot]" "$1"' sh "$SCRIPT"
 check "verdict lookup never loose-matches every [bot] author" \
   sh -c '! grep -q "endswith" "$1"' sh "$SCRIPT"
 check "npm test runs the full suite" \

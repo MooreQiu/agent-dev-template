@@ -63,7 +63,7 @@ run_filter issue_comment
 expect_deny "github-actions ack comment containing @claude is denied"
 
 cat >"$TMP/event.json" <<'EOF'
-{"action":"created","issue":{"number":13,"labels":[]},"comment":{"body":"🤖 @claude acknowledged","user":{"login":"agent-dev-bot[bot]","type":"Bot"}},"sender":{"login":"agent-dev-bot[bot]","type":"Bot"}}
+{"action":"created","issue":{"number":13,"labels":[]},"comment":{"body":"🤖 @claude acknowledged","user":{"login":"mooreqiu-agent-dev-bot[bot]","type":"Bot"}},"sender":{"login":"mooreqiu-agent-dev-bot[bot]","type":"Bot"}}
 EOF
 run_filter issue_comment
 expect_deny "GitHub App bot ack comment containing @claude is denied"
@@ -93,7 +93,7 @@ run_filter issues
 expect_allow "human assignment on ready-for-agent issue is allowed"
 
 cat >"$TMP/event.json" <<'EOF'
-{"action":"assigned","issue":{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"agent-claimed"}]},"assignee":{"login":"agent-dev-bot[bot]","type":"Bot"},"sender":{"login":"agent-dev-bot[bot]","type":"Bot"}}
+{"action":"assigned","issue":{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"agent-claimed"}]},"assignee":{"login":"mooreqiu-agent-dev-bot[bot]","type":"Bot"},"sender":{"login":"mooreqiu-agent-dev-bot[bot]","type":"Bot"}}
 EOF
 run_filter issues
 expect_deny "automated (bot) assignment is denied"
