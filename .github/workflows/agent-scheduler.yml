@@ -2,7 +2,7 @@ name: Agent Scheduler
 
 on:
   pull_request:
-    types: [closed] # 合并完成即推进队列；closed-unmerged 走周期 sweep 恢复
+    types: [closed, labeled] # 合并完成即推进队列；labeled=agent-failed 触发退回修复（issue #20）；closed-unmerged 走周期 sweep 恢复
   issues:
     types: [labeled, reopened] # 新就绪工作立即可调度
   workflow_dispatch:
@@ -20,6 +20,88 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  repair:
+    # 退回自动修复（issue #20）：独立审计 REQUEST_CHANGES 给 PR 打上
+    # agent-failed 标签即触发本 job。修复在同一 issue 与既有分支上重走
+    # 统一实现管线（agent-task.sh），受 max_repair_rounds 预算约束；
+    # 推送新提交后由 pull_request synchronize 事件自动触发绑定新 head
+    # SHA 的独立复审（pr-review.yml），形成 rejection→repair→re-review
+    # 闭环。重复标签事件由统一认领协议去重；预算耗尽/无进展时移入
+    # blocked 状态并附证据（scripts/pr-repair.sh）。注：标签须由 GitHub
+    # App 身份添加才会触发事件（app-auth.sh）；GITHUB_TOKEN 回退部署
+    # 依赖每日 sweep 的修复队列兜底。
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'agent-failed' &&
+      startsWith(github.event.pull_request.head.ref, 'agent/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      API_TIMEOUT_MS: "3000000"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      AGENT_OWNER: agent-scheduler-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # git push 认证统一走 scripts/app-auth.sh
+
+      # 单一事实源（issue #57）：runtime pin 取自 .agent/project.json，
+      # 与 scripts/bootstrap-env.sh 的校验保持一致。
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node_pin.outputs.version }}
+
+      - name: Bootstrap environment (pinned tooling, fail-fast checks)
+        run: bash scripts/bootstrap-env.sh
+
+      - name: Resolve auth (GitHub App installation token)
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
+        run: scripts/app-auth.sh
+
+      - name: Configure git
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+      - name: Repair rejected PR (bounded rounds, fresh review after push)
+        run: |
+          PR="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          BASE="${{ github.event.repository.default_branch }}"
+          DEFAULT="${{ vars.AGENT_MODEL_DEFAULT || 'glm-5.3[1m]' }}"
+          FLASH="${{ vars.AGENT_MODEL_FLASH || 'glm-5.3-flash[1m]' }}"
+          ISSUE="$(gh pr view "$PR" --json body --jq .body | grep -Eo '(Closes|Fixes|Resolves) #[0-9]+' | head -1 | grep -Eo '[0-9]+')"
+          if [ -n "$ISSUE" ] && [ "$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("trivial") != null')" = "true" ]; then
+            echo "trivial 任务，使用 flash 模型"
+            export ANTHROPIC_DEFAULT_SONNET_MODEL="$FLASH" ANTHROPIC_DEFAULT_OPUS_MODEL="$FLASH" ANTHROPIC_DEFAULT_HAIKU_MODEL="$FLASH"
+          else
+            export ANTHROPIC_DEFAULT_SONNET_MODEL="$DEFAULT" ANTHROPIC_DEFAULT_OPUS_MODEL="$DEFAULT" ANTHROPIC_DEFAULT_HAIKU_MODEL="$FLASH"
+          fi
+          # 事件携带被拒 head SHA：过期反馈（PR 已有更新）直接跳过；
+          # 预算/去重/无进展判定与兜底路径全部收敛在 pr-repair.sh。
+          rc=0
+          scripts/pr-repair.sh dispatch "$PR" --rejected-head "$HEAD_SHA" --target "origin/$BASE" || rc=$?
+          case "$rc" in
+            0) echo "PR #$PR 修复路径收敛（已修复/跳过/受控阻塞）" ;;
+            *) echo "PR #$PR 修复运行失败（rc=$rc）；保留 agent-failed 标签，等待下一事件或周期 sweep 重试" ;;
+          esac
+
   advance:
     # 只在真实进展事件上推进：PR 成功合并、新任务就绪/重新打开、手动触发。
     if: >-
