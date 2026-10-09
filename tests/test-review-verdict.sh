@@ -414,6 +414,8 @@ check "reviewer tools cannot merge, label or push" \
   sh -c '! grep -Fq "Bash(gh:*)" "$1" && ! grep -Fq "Bash(git:*)" "$1"' sh "$WF"
 check "reviewer keeps comment access for its report" \
   sh -c 'grep -Fq "Bash(gh pr comment:*)" "$1"' sh "$WF"
+check "nonessential-traffic kill switch keeps its exact name" \
+  sh -c 'grep -Fq "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" "$1" && ! grep -Fq "NONSSENTIAL" "$1"' sh "$WF"
 
 check "decider script never reads PR comments" \
   sh -c '! grep -Eq "issues/.+/comments" "$1"' sh "$SCRIPT"
