@@ -267,10 +267,13 @@ for wf in claude.yml agent-sweep.yml pr-review.yml; do
   fi
 done
 
-grep -Fq 'endswith("[bot]")' "$WORKFLOWS_DIR/pr-review.yml" \
-  && pass "pr-review verdict lookup accepts any bot author (token or App)" \
-  || fail "pr-review verdict lookup accepts any bot author (token or App)" \
-    "no endswith(\"[bot]\") found"
+# Verdict lookup moved from pr-review.yml into scripts/review-verdict.sh
+# (main's architecture); it must recognize the App bot login so auto-merge
+# keeps working once the App is configured (issue #13).
+grep -Fq 'agent-dev-bot[bot]' "$REPO_ROOT/scripts/review-verdict.sh" \
+  && pass "verdict lookup accepts the App bot (agent-dev-bot[bot])" \
+  || fail "verdict lookup accepts the App bot (agent-dev-bot[bot])" \
+    "scripts/review-verdict.sh does not allowlist agent-dev-bot[bot]"
 
 # --- AC: setup runbook + smoke test documentation ---
 [ -f "$DOCS" ] \
