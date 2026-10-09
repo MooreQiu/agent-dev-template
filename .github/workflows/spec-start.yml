@@ -18,6 +18,7 @@ on:
 permissions:
   issues: write
   contents: read
+  actions: read # restore planning artifacts from a previous run
 
 concurrency:
   group: spec-start-${{ github.event.inputs.spec }}
@@ -67,6 +68,23 @@ jobs:
       - name: Preflight the specification role
         run: bash scripts/agent-preflight.sh verify specify
 
+      # Resume a previous run instead of re-deriving planning from scratch
+      # (issue #44, contract in docs/SPEC_ARTIFACTS.md). A missing bundle
+      # (exit 3) just means this run plans fresh; a rejected bundle fails
+      # closed rather than silently re-planning over an unknown state.
+      - name: Restore planning artifacts from a previous run
+        run: |
+          set +e
+          bash scripts/spec-artifacts.sh restore planning "$SPEC" "$REVISION"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "::notice::Restored the stored planning bundle" ;;
+            3) echo "::notice::No stored planning bundle; planning runs fresh" ;;
+            *) echo "::error::Stored planning bundle rejected (exit $rc)" >&2
+               exit "$rc" ;;
+          esac
+
       - name: Validate the approved spec
         run: |
           set +e
@@ -80,7 +98,9 @@ jobs:
           esac
           # upload-artifact (@actions/glob) rejects path patterns containing
           # "." or ".." segments, so derive the feature directory up front.
-          echo "FEATURE_DIR=$(dirname "$SPEC")" >> "$GITHUB_ENV"
+          FEATURE_DIR=$(dirname "$SPEC")
+          echo "FEATURE_DIR=$FEATURE_DIR" >> "$GITHUB_ENV"
+          echo "FEATURE=$(basename "$FEATURE_DIR")" >> "$GITHUB_ENV"
 
       # Generate plan.md/tasks.md when missing (validate them when present).
       # Planning proceeds autonomously within the approved constraints; a
@@ -94,13 +114,21 @@ jobs:
       - name: Generate issues from the approved tasks
         run: bash scripts/spec-start.sh "$SPEC" "$REVISION" --json
 
+      # Bind the payload to feature identity + approved revision before the
+      # upload so a fresh runner can validate what it retrieves.
+      - name: Bind the planning bundle manifest
+        if: env.PLANNING_REQUIRED == '1'
+        run: |
+          bash scripts/spec-artifacts.sh manifest planning "$SPEC" "$REVISION" \
+            "$FEATURE_DIR/plan.md" "$FEATURE_DIR/tasks.md"
+
       - name: Upload planning artifacts
         if: env.PLANNING_REQUIRED == '1'
         uses: actions/upload-artifact@v4
         with:
-          name: planning-${{ github.event.inputs.revision }}
+          name: spec-planning-${{ env.FEATURE }}-${{ inputs.revision }}
           path: |
-            ${{ env.FEATURE_DIR }}/spec.md
+            ${{ env.FEATURE_DIR }}/manifest.json
             ${{ env.FEATURE_DIR }}/plan.md
             ${{ env.FEATURE_DIR }}/tasks.md
           if-no-files-found: error

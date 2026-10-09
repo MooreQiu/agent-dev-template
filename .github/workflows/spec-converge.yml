@@ -25,6 +25,7 @@ on:
 permissions:
   issues: write
   contents: read
+  actions: read # restore convergence artifacts from a previous run
 
 concurrency:
   group: spec-converge-${{ github.event.inputs.spec }}
@@ -85,34 +86,94 @@ jobs:
         run: |
           FEATURE_DIR=$(dirname "$SPEC")
           echo "FEATURE_DIR=$FEATURE_DIR" >> "$GITHUB_ENV"
+          echo "FEATURE=$(basename "$FEATURE_DIR")" >> "$GITHUB_ENV"
           bash scripts/spec-converge-precheck.sh "$SPEC" "$REVISION" --precheck --json
+
+      # Resume convergence from a previous run's bundle instead of re-running
+      # the agent evaluation (issue #44, contract in docs/SPEC_ARTIFACTS.md).
+      # The bundle is bound to the validated target commit: a missing (exit
+      # 3) or stale (exit 4) bundle falls back to fresh evaluation; a
+      # rejected one fails the job closed.
+      - name: Restore convergence artifacts from a previous run
+        id: restore
+        if: steps.precheck.outputs.outcome == 'ready'
+        run: |
+          set +e
+          bash scripts/spec-artifacts.sh restore convergence "$SPEC" "$REVISION" \
+            --target "$(git rev-parse HEAD)"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "outcome=restored" >> "$GITHUB_OUTPUT"
+               echo "::notice::Restored the stored convergence bundle; skipping agent evaluation" ;;
+            3) echo "outcome=evaluate" >> "$GITHUB_OUTPUT"
+               echo "::notice::No stored convergence bundle; evaluating fresh" ;;
+            4) echo "outcome=evaluate" >> "$GITHUB_OUTPUT"
+               echo "::notice::Stored bundle is stale for the current target; evaluating fresh" ;;
+            5) echo "outcome=evaluate" >> "$GITHUB_OUTPUT"
+               echo "::notice::Stored bundle fails the findings schema; discarding it and evaluating fresh" ;;
+            *) echo "::error::Stored convergence bundle rejected (exit $rc)" >&2
+               exit 1 ;;
+          esac
 
       # The converge skill assesses the integrated default branch against the
       # approved spec, plan, requirements, and acceptance scenarios and writes
       # machine-readable findings; closed issues alone are not evidence.
       - name: Evaluate the integrated branch (converge)
-        if: steps.precheck.outputs.outcome == 'ready'
+        if: steps.precheck.outputs.outcome == 'ready' && steps.restore.outputs.outcome == 'evaluate'
         run: |
           AGENT=claude scripts/agent.sh "Converge the feature whose approved spec is $SPEC at revision $REVISION on the integrated default branch. Explicitly invoke the /speckit-converge skill, then write your findings as JSON Lines to $FEATURE_DIR/convergence/findings.jsonl following the schema in docs/SPEC_CONVERGE.md: one object per line with id, requirement, kind (missing, regression, or verified), summary, evidence; cite the requirement id exactly as it appears in the approved spec. Evaluate the whole repository against the spec, plan, requirements, and acceptance scenarios; closed issues and merged PRs alone are not evidence of completion. Never modify spec.md, approval.json, plan.md, or tasks.md; report requirements outside the approved spec instead of implementing them. After invoking the skill, record it with: bash scripts/agent-preflight.sh note-invocation implement speckit-converge"
 
       - name: Verify completion and schedule remaining work
-        if: steps.precheck.outputs.outcome == 'ready'
+        id: verify
+        if: steps.precheck.outputs.outcome == 'ready' && (steps.restore.outputs.outcome == 'evaluate' || steps.restore.outputs.outcome == 'restored')
         run: |
           set +e
           bash scripts/spec-converge.sh "$SPEC" "$REVISION" --findings "$FEATURE_DIR/convergence/findings.jsonl" --budget "$BUDGET" --json
           rc=$?
           set -e
-          if [ "$rc" -eq 4 ]; then
+          # Persist gate for the bind/upload steps below: only a verify that
+          # actually validated the findings may feed the bundle. rc 1 leaves
+          # status unset, so invalid content is never bound or uploaded and
+          # the next run re-evaluates instead of restoring it
+          # (docs/SPEC_ARTIFACTS.md recovery contract).
+          if [ "$rc" -eq 0 ]; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -eq 4 ]; then
+            echo "status=blocked" >> "$GITHUB_OUTPUT"
             echo "::error::Convergence blocked: unresolved requirements were reported as blocked; a human decision is required."
           fi
           exit "$rc"
 
+      # Persist findings, evidence, and the completion record as a versioned
+      # bundle so a later fresh runner can resume from them (issue #44).
+      # always() only lets the condition decide after a failed (blocked)
+      # verify: without a validated status no bundle is ever bound, so
+      # unusable content cannot be fixed up into a "valid" artifact.
+      - name: Bind the convergence bundle manifest
+        if: always() && steps.precheck.outputs.outcome == 'ready' && (steps.verify.outputs.status == 'ok' || steps.verify.outputs.status == 'blocked')
+        run: |
+          files=""
+          for f in "$FEATURE_DIR"/convergence/findings.jsonl \
+                    "$FEATURE_DIR"/convergence/evidence/* \
+                    "$FEATURE_DIR"/convergence/complete.json; do
+            [ -f "$f" ] && files="$files $f"
+          done
+          if [ -n "$files" ]; then
+            # shellcheck disable=SC2086 # word splitting is the file list
+            bash scripts/spec-artifacts.sh manifest convergence "$SPEC" "$REVISION" \
+              --target "$(git rev-parse HEAD)" $files
+          else
+            echo "::notice::No convergence outputs to persist"
+          fi
+
       - name: Upload convergence artifacts
-        if: always()
+        if: always() && steps.precheck.outputs.outcome == 'ready' && (steps.verify.outputs.status == 'ok' || steps.verify.outputs.status == 'blocked')
         uses: actions/upload-artifact@v4
         with:
-          name: convergence-${{ github.event.inputs.revision }}
+          name: spec-convergence-${{ env.FEATURE }}-${{ github.event.inputs.revision }}
           path: |
+            ${{ env.FEATURE_DIR }}/convergence/manifest.json
             ${{ env.FEATURE_DIR }}/convergence/findings.jsonl
             ${{ env.FEATURE_DIR }}/convergence/evidence
             ${{ env.FEATURE_DIR }}/convergence/complete.json

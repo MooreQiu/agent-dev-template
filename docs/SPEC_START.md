@@ -1,6 +1,6 @@
 # Spec Start：从已审批规格启动自主规划与 issue 生成
 
-issue #16 的落地说明：把"人工审批过的 spec"变成"可被 agent 认领的 issue 队列"。入口是 `scripts/spec-start.sh`，Actions 连接是 `.github/workflows/spec-start.yml`（workflow_dispatch，人工触发）。
+issue #16 的落地说明：把"人工审批过的 spec"变成"可被 agent 认领的 issue 队列"。入口是 `scripts/spec-start.sh`，Actions 连接是 `.github/workflows/spec-start.yml`（workflow_dispatch，人工触发）。plan.md/tasks.md 跨运行持久化与恢复遵循 [docs/SPEC_ARTIFACTS.md](docs/SPEC_ARTIFACTS.md) 的产物契约。
 
 ## 流程总览
 
