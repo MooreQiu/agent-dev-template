@@ -148,7 +148,7 @@ jobs:
               echo '```'
               cat "${RUNNER_TEMP:-/tmp}/model-config.err"
               echo '```'
-              echo "用法：\`@$HARNESS model=<模型名> effort=<级别> <任务>\`（model 别名 sonnet/opus/haiku 仅限 @claude；effort 支持范围按 harness 不同，见报错）；修正后重新评论即可。优先级与配置详见 README「模型与 effort 配置」。"
+              echo "用法：\`@$HARNESS model=<模型名> effort=<级别> <任务>\`（model 别名 sonnet/opus/haiku 仅限 @claude；effort 支持范围按 harness 不同，见报错）；修正后重新评论即可。优先级与配置详见 README \"Model and effort configuration\" 一节。"
             } >"${RUNNER_TEMP:-/tmp}/reject.md"
             if [ "$(gh api "repos/${GITHUB_REPOSITORY}/issues/$N" --jq '.pull_request != null' 2>/dev/null)" = "true" ]; then
               gh pr comment "$N" --body-file "${RUNNER_TEMP:-/tmp}/reject.md" || true

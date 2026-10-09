@@ -27,11 +27,24 @@
 # required linear history enforced by setup.sh); REQUEST_CHANGES requeues
 # the PR via the agent-failed label.
 #
+# "status" (issue #55) mirrors a fully verified verdict into GitHub's native
+# review API (gh pr review --approve / --request-changes, the distilled
+# report as the body) so the PR page shows "Approved" / "Changes requested"
+# next to otherwise green checks. It is a DISPLAY channel only: it validates
+# the artifact exactly like merge (schema/PR/head/run bindings, live head,
+# evidence digest) and then posts a review instead of mutating the PR; the
+# native review status is never read back as merge authorization, and ack or
+# progress comments stay plain comments. It runs under whatever identity
+# scripts/app-auth.sh resolved (the App), inside the review workflow only.
+# Unlike merge it does not re-run ci-gate.sh check: the gate is surfaced as
+# its own status check and re-verified by the merge decider regardless.
+#
 # Usage:
 #   scripts/review-verdict.sh write <pr> --reviewer-output FILE --head-sha SHA
 #                                  [--artifact FILE] [--evidence-dir DIR]
 #   scripts/review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
 #                                  [--gate-target DIR]
+#   scripts/review-verdict.sh status <pr> [--artifact FILE] [--evidence-dir DIR]
 #
 #   --evidence-dir defaults to $CI_GATE_EVIDENCE; --artifact defaults to
 #   <evidence-dir>/review-verdict.json; --gate-target forwards the reviewed
@@ -42,7 +55,7 @@
 #   2 usage / invalid arguments
 #   3 verdict artifact missing, malformed or inconsistent
 #   4 reviewer output carries no exactly-once usable VERDICT line (write)
-#   5 merge command failed
+#   5 merge or review-status mutation failed
 #   6 CI gate evidence missing, tampered with or rejected
 #   7 PR head unresolvable or changed since the review
 #   8 run identity mismatch (no run context / different run)
@@ -61,6 +74,7 @@ Usage:
                         [--artifact FILE] [--evidence-dir DIR]
   review-verdict.sh merge <pr> [--artifact FILE] [--evidence-dir DIR]
                         [--gate-target DIR]
+  review-verdict.sh status <pr> [--artifact FILE] [--evidence-dir DIR]
 EOF
   exit 2
 }
@@ -69,7 +83,7 @@ EOF
 MODE="$1"
 PR="$2"
 case "$MODE" in
-  write | merge) ;;
+  write | merge | status) ;;
   *) usage ;;
 esac
 shift 2
@@ -208,7 +222,9 @@ if [ "$MODE" = write ]; then
   exit 0
 fi
 
-# ------------------------------------------------------------- merge mode ---
+# ------------------------------------------------- merge / status modes ---
+# Both re-validate the artifact against live PR state; they diverge only at
+# the mutation point below (merge mutates the PR, status displays).
 [ -n "$ARTIFACT" ] || {
   [ -n "$EVIDENCE" ] ||
     die 3 "no artifact: pass --artifact, or --evidence-dir to use <evidence>/review-verdict.json"
@@ -281,6 +297,42 @@ resolve_evidence
 [ "$DIGEST" = "$A_DIGEST" ] ||
   die 6 "gate evidence under $EVIDENCE does not match the artifact digest; the evidence changed after the review"
 
+# --------------------------------------------------------- status mode ---
+# Issue #55: display channel. Everything above validated the artifact exactly
+# like merge; here the verified verdict becomes a native PR review instead of
+# a PR mutation. The badge it produces is never an input to merge decisions.
+if [ "$MODE" = status ]; then
+  REPORT_FILE="$(mktemp "${TMPDIR:-/tmp}/review-verdict-report.XXXXXX")"
+  node -e '
+    const fs = require("fs");
+    let a;
+    try { a = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+    catch (e) { process.exit(1); }
+    if (typeof a.report !== "string" || !a.report.trim()) process.exit(1);
+    fs.writeFileSync(process.argv[2], a.report);
+  ' "$ARTIFACT" "$REPORT_FILE" ||
+    die 3 "verdict artifact carries no review report: $ARTIFACT"
+  BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/review-verdict-body.XXXXXX")"
+  {
+    cat "$REPORT_FILE"
+    printf '\n---\n_verdict artifact: run %s, head %s (display-only; merge authorization stays artifact-bound)_\n' \
+      "$A_RUN" "$A_HEAD"
+  } > "$BODY_FILE"
+  rm -f "$REPORT_FILE"
+  case "$A_VERDICT" in
+    APPROVE) REVIEW_FLAG="--approve" ;;
+    REQUEST_CHANGES) REVIEW_FLAG="--request-changes" ;;
+  esac
+  if gh pr review "$PR" "$REVIEW_FLAG" --body-file "$BODY_FILE"; then
+    rm -f "$BODY_FILE"
+    echo "review status: PR #$PR marked $A_VERDICT via native review (display-only, artifact-bound)"
+    exit 0
+  fi
+  rm -f "$BODY_FILE"
+  die 5 "posting the native review status for PR #$PR failed"
+fi
+
+# --------------------------------------------------------- merge mode ---
 GATE_SCRIPT="$(dirname "$0")/ci-gate.sh"
 if [ -n "$GATE_TARGET" ]; then
   bash "$GATE_SCRIPT" check --evidence-dir "$EVIDENCE" --target-dir "$GATE_TARGET" ||

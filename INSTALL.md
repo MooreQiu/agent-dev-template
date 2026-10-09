@@ -2,6 +2,10 @@
 
 本文件的目标读者是**编码 agent**：指令必须逐步原样执行，每步有明确的完成判据；不确定时停下来问人，不要跳步、不要改步。
 
+部署完成后的日常运维（队列/认领/裁决语义、暂停/预算/拒收恢复）见
+[docs/OPERATIONS.md](docs/OPERATIONS.md) 与 [docs/RUN_CONTROL.md](docs/RUN_CONTROL.md)；
+升级、冲突、回滚与卸载见 [docs/UPGRADE.md](docs/UPGRADE.md)。
+
 ## 前置检查（全部通过才继续）
 
 | 检查 | 命令 | 通过判据 |
@@ -36,6 +40,22 @@ cd /tmp/adt
    `Allow GitHub Actions to create and approve pull requests`
    （不开则 agent 只能推分支 + 给 compare 链接，PR 需人工点开）
 2. **填写项目配置 `.agent/project.json`**：运行时/锁文件与 install/build/test/lint/typecheck 命令必须换成真实值（install 与 test 必填，占位符会被 `scripts/agent-preflight.sh verify-project` 拒绝），AGENTS.md「项目信息」同步为可读摘要
+
+## 最小权限与认证
+
+| 主体 | 需要的权限 | 说明 |
+|---|---|---|
+| 执行部署的账号（跑 setup.sh / deploy.sh） | 目标仓库 **admin** | 写 secrets/variables、设分支保护、开 auto-merge 都要 admin |
+| 日常使用者（评论 @claude、认领 issue） | 仓库 write 即可 | 不需要 admin |
+| Actions 里的 GITHUB_TOKEN | workflow 声明的最小集合 | 各 workflow 均只申请 `contents: write`、`pull-requests: write`、`issues: write`，不申请 environment/admin |
+
+- **网页开关**（上面的必做人工步骤）是 GitHub 侧唯一无法用权限声明替代的项
+- **可选 GitHub App**：消除 bot 事件的人工审批门，其最小权限清单见
+  [docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md)
+- **触发面收敛**：设 `AGENT_ALLOWED_ACTORS` 变量可限制谁能触发 agent 派发；
+  机器人评论始终被过滤以防递归
+- **凭证边界**：key 只进 GitHub secrets（`ANTHROPIC_AUTH_TOKEN` 等），不进
+  代码、日志、commit；轮换见 [docs/UPGRADE.md](docs/UPGRADE.md#密钥secrets的处理)
 
 ## 部署验证清单（逐项执行，全部满足才算成功）
 

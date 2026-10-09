@@ -421,8 +421,10 @@ SCHEDULER_YML="$REPO_ROOT/.github/workflows/agent-scheduler.yml"
 SWEEP_YML="$REPO_ROOT/.github/workflows/agent-sweep.yml"
 
 check "event-driven scheduler workflow exists" test -f "$SCHEDULER_YML"
+# closed merges must stay the advance trigger; extra labels (issue #20:
+# agent-failed repair events) may extend the list but never gate advance.
 check "scheduler advances after PR merges" \
-  sh -c 'grep -Fq "types: [closed]" "$1" && grep -Fq "merged == true" "$1"' sh "$SCHEDULER_YML"
+  sh -c 'grep -Eq "^ *types: \[closed(, [a-z-]+)*\]" "$1" && grep -Fq "merged == true" "$1"' sh "$SCHEDULER_YML"
 check "scheduler reacts to newly available work" \
   sh -c 'grep -Fq "ready-for-agent" "$1"' sh "$SCHEDULER_YML"
 check "scheduler selects through the dependency-aware selector" \

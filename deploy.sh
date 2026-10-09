@@ -4,12 +4,31 @@
 # 用法:
 #   ./deploy.sh owner/name                 # 克隆远端仓库，走 PR
 #   ./deploy.sh /path/to/local/repo        # 部署进本地仓库（不自动 push）
+#   ./deploy.sh --preview <target>         # 只预览变更，不复制/不提交/不推送
 # 环境变量:
 #   ANTHROPIC_AUTH_TOKEN  提供时自动完成 secrets 配置
 #   ANTHROPIC_BASE_URL    自定义端点（默认 https://open.bigmodel.cn/api/anthropic）
 set -euo pipefail
 
-TARGET="${1:?用法: ./deploy.sh <owner/name | 本地仓库路径>}"
+PREVIEW=0
+TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --preview) PREVIEW=1 ;;
+    -h|--help) sed -n 's/^# \{0,1\}//p' "$0" | sed -n '/^用法:/,/^环境变量:/p'; exit 0 ;;
+    *)
+      if [ -z "$TARGET" ]; then
+        TARGET="$1"
+      else
+        echo "未知参数: $1（用法: ./deploy.sh [--preview] <owner/name | 本地仓库路径>）" >&2
+        exit 2
+      fi
+      ;;
+  esac
+  shift
+done
+[ -n "$TARGET" ] || { echo "用法: ./deploy.sh [--preview] <owner/name | 本地仓库路径>" >&2; exit 1; }
+
 SRC=$(cd "$(dirname "$0")" && pwd)
 TMP=""
 
@@ -32,9 +51,6 @@ else
 fi
 
 cd "$DIR"
-DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
-git fetch origin "$DEFAULT_BRANCH" 2>/dev/null || true
-git checkout -B chore/agent-dev-template "origin/$DEFAULT_BRANCH" 2>/dev/null || git checkout -B chore/agent-dev-template
 
 say() { printf '\n==> %s\n' "$*"; }
 
@@ -57,6 +73,40 @@ ITEMS=(
   .github/workflows/project-sync.yml
   setup.sh
 )
+
+# --- 预览模式：只报告会发生的变更，绝不修改目标仓库 -------------------------
+if [ "$PREVIEW" -eq 1 ]; then
+  say "预览部署变更到 ${REPO}（--preview：不复制、不提交、不推送、不切分支）"
+  echo "  + 目标缺失（会新增）   = 与模板一致   ! 已存在且与模板不同（保留本地定制）"
+  ADDED=0
+  SAME=0
+  CONFLICT=0
+  preview_item() {
+    local item="$1"
+    if [ ! -e "$item" ]; then
+      printf '  + %s\n' "$item"
+      ADDED=$((ADDED + 1))
+    elif diff -r -q "$SRC/$item" "$item" >/dev/null 2>&1; then
+      printf '  = %s\n' "$item"
+      SAME=$((SAME + 1))
+    else
+      printf '  ! %s\n' "$item"
+      CONFLICT=$((CONFLICT + 1))
+    fi
+  }
+  for item in "${ITEMS[@]}"; do
+    preview_item "$item"
+  done
+  say "预览结果：$ADDED 新增 / $SAME 一致 / $CONFLICT 冲突"
+  if [ "$CONFLICT" -gt 0 ]; then
+    echo "  冲突组件在实际部署时保留本地版本（不覆盖）；要吸收模板更新请手动 diff 合并"
+  fi
+  exit 0
+fi
+
+DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+git fetch origin "$DEFAULT_BRANCH" 2>/dev/null || true
+git checkout -B chore/agent-dev-template "origin/$DEFAULT_BRANCH" 2>/dev/null || git checkout -B chore/agent-dev-template
 
 say "复制体系文件到 ${REPO}（已存在的一律跳过，不覆盖你的定制）"
 SKIPPED=()
