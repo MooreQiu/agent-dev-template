@@ -97,7 +97,14 @@ sed -n '1,10p' "$WORK/prep/prepare.out" >&2
   grep -Fq 'ERROR' "$WORK/prep/prepare.out" && exit 64
   grep -Fq 'unbound variable' "$WORK/prep/prepare.out" && exit 70
   grep -Fq 'command not found' "$WORK/prep/prepare.out" && exit 71
-  grep -Fq 'No such file or directory' "$WORK/prep/prepare.out" && exit 72
+  grep -Fq 'No such file or directory' "$WORK/prep/prepare.out" && {
+    grep -Eq '^cd: ' "$WORK/prep/prepare.out" && exit 80
+    grep -Eq '^bash: ' "$WORK/prep/prepare.out" && exit 81
+    grep -Eq '^(git: |fatal: )' "$WORK/prep/prepare.out" && exit 82
+    grep -Fq 'shell-init' "$WORK/prep/prepare.out" && exit 83
+    grep -Eq '^(mv: |cp: |mkdir: )' "$WORK/prep/prepare.out" && exit 84
+    exit 72
+  }
   grep -Fq 'Usage' "$WORK/prep/prepare.out" && exit 73
   grep -Fq 'not found' "$WORK/prep/prepare.out" && exit 74
   grep -Fq 'fatal' "$WORK/prep/prepare.out" && exit 75
