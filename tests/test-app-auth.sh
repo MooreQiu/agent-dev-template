@@ -286,6 +286,14 @@ if [ -f "$DOCS" ]; then
   grep -Eqi 'smoke|端到端' "$DOCS" \
     && pass "runbook documents the end-to-end smoke test" \
     || fail "runbook documents the end-to-end smoke test"
+  grep -Eq '必须.{0,6}agent-dev-bot|agent-dev-bot.{0,30}必须' "$DOCS" \
+    && pass "runbook pins the App name to agent-dev-bot (not arbitrary)" \
+    || fail "runbook pins the App name to agent-dev-bot (not arbitrary)" \
+      "name must be documented as mandatory"
+  grep -Eq 'review-verdict|allowlist' "$DOCS" \
+    && pass "runbook explains why the App name is fixed" \
+    || fail "runbook explains why the App name is fixed" \
+      "no mention of the verdict allowlist dependency"
 fi
 grep -q 'GITHUB_APP_SETUP' "$REPO_ROOT/README.md" \
   && pass "README links the GitHub App runbook" \

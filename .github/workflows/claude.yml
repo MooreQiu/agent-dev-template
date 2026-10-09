@@ -45,6 +45,10 @@ jobs:
       # 防止改用 GitHub App 认证后评论递归触发派发（issue #13）
       - name: Filter dispatch triggers
         id: filter
+        env:
+          # repo 变量只经 ${{ vars.* }} 上下文注入，不进 process env，
+          # 必须显式映射给脚本（issue #13）
+          AGENT_ALLOWED_ACTORS: ${{ vars.AGENT_ALLOWED_ACTORS }}
         run: |
           if scripts/dispatch-filter.sh; then
             echo "result=allow" >> "$GITHUB_OUTPUT"

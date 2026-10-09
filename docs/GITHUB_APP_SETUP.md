@@ -24,11 +24,19 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 
 | 字段 | 值 |
 |---|---|
-| GitHub App name | `agent-dev-bot`（任意，全站唯一） |
+| GitHub App name | `agent-dev-bot`（**必须**精确使用此名，原因见下；仍需全站唯一） |
 | Homepage URL | 仓库地址即可 |
 | Expire user authorization tokens | 默认即可 |
 | Webhook → Active | **取消勾选**（不需要） |
 | Where can this GitHub App be installed | Only on this account（推荐） |
+
+> **为什么 App 名字必须是精确的 `agent-dev-bot`**：`scripts/review-verdict.sh`
+> 用**精确 allowlist**（`github-actions[bot]`、`agent-dev-bot[bot]`）识别审计 bot 的
+> verdict 评论，APPROVE 才会自动合并。App 的 bot 登录名由 App 名字生成
+> （slug + `[bot]`），改成任何其他名字，verdict 评论的作者就变成 `<你的名字>[bot]`，
+> allowlist 匹配不到——每个 PR 都停在 `review verdict missing`，自动合并静默失效，
+> smoke test 第 5 步也会失败且不提示原因。allowlist 保持精确匹配是有意为之
+> （未知 App 的评论永远不能驱动合并），所以请直接把 App 命名为 `agent-dev-bot`。
 
 **Repository permissions（最小集）**：
 

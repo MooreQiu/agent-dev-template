@@ -148,6 +148,11 @@ grep -Fq "steps.filter.outputs.result == 'allow'" "$CLAUDE_YML" \
   && pass "claude.yml gates dispatch on filter result" \
   || fail "claude.yml gates dispatch on filter result" "no step condition found"
 
+grep -Fq 'AGENT_ALLOWED_ACTORS: ${{ vars.AGENT_ALLOWED_ACTORS }}' "$CLAUDE_YML" \
+  && pass "claude.yml passes AGENT_ALLOWED_ACTORS to the filter step" \
+  || fail "claude.yml passes AGENT_ALLOWED_ACTORS to the filter step" \
+    "no env mapping: repo vars never reach process env without it"
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures test(s) failed"
   exit 1
