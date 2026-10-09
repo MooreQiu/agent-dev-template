@@ -15,6 +15,14 @@
 #      acceptance passes; approved spec and plan are preserved
 #   AC6 the tests themselves
 #
+# Also covers (issue #43 acceptance criteria):
+#   AC7 an undrained queue maps to an explicit deferred precheck outcome
+#      and never evaluates, schedules remediation, or publishes completion
+#   AC8 a drained queue maps to ready; invalid approval or other precheck
+#      errors fail closed with the precheck exit code
+#   AC9 behavioral regression tests for the workflow control flow
+#      (deferred, ready, and failed precheck outcomes)
+#
 # Run: bash tests/test-spec-converge.sh
 set -u
 
@@ -132,6 +140,7 @@ make_fixture() { # make_fixture <dir>
   fx=$1
   mkdir -p "$fx/scripts" "$fx/specs/$FEATURE"
   cp "$REPO_ROOT/scripts/spec-converge.sh" "$fx/scripts/spec-converge.sh" 2>/dev/null
+  cp "$REPO_ROOT/scripts/spec-converge-precheck.sh" "$fx/scripts/spec-converge-precheck.sh" 2>/dev/null
   cp "$TMP/gate-stub.sh" "$fx/scripts/ci-gate.sh" 2>/dev/null
   chmod +x "$fx/scripts/ci-gate.sh" 2>/dev/null
   git -C "$fx" init -q
@@ -185,6 +194,19 @@ run_sc() { # run_sc [args...] -> $STATUS / $OUT_FILE / $OUT_ERR
   : > "$GH_LOG"
   : > "$GATE_LOG"
   OUT=$(cd "$FX" && PATH="$MOCK_BIN:$PATH" bash "$SC" "$@" 2>"$OUT_ERR")
+  STATUS=$?
+  printf '%s\n' "$OUT" > "$OUT_FILE"
+}
+
+PRE_OUT="$TMP/pre-outcome" # captured step output (a $GITHUB_OUTPUT stand-in)
+PC="$FX/scripts/spec-converge-precheck.sh"
+
+run_pre() { # run_pre [args...] -> $STATUS / $OUT_FILE / $OUT_ERR / $PRE_OUT
+  : > "$GH_LOG"
+  : > "$GATE_LOG"
+  : > "$PRE_OUT"
+  OUT=$(cd "$FX" && PATH="$MOCK_BIN:$PATH" GITHUB_OUTPUT="$PRE_OUT" \
+    bash "$PC" "$@" 2>"$OUT_ERR")
   STATUS=$?
   printf '%s\n' "$OUT" > "$OUT_FILE"
 }
@@ -270,6 +292,64 @@ reset_scenario
 run_sc "specs/$FEATURE/spec.md" "$R1"
 check "drained queue proceeds to integrated acceptance" test -s "$GATE_LOG"
 restore_fixture
+
+# ============================================================================
+echo "== AC7-AC9 (issue #43): precheck outcome controls workflow steps =="
+
+reset_scenario
+printf '31\t[%s/T009] Human filed bug\tOPEN\n' "$FEATURE" > "$OPEN_TSV"
+run_pre "specs/$FEATURE/spec.md" "$R1" --json
+check "undrained queue maps to outcome=deferred with exit 0" \
+  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$PRE_OUT"
+check "deferred outcome is also explicit on stdout" \
+  sh -c 'grep -Fxq "outcome=deferred" "$1"' sh "$OUT_FILE"
+check "deferred precheck announces itself as a notice, not a failure" \
+  sh -c 'grep -Fq "::notice::" "$1" && grep -qi "not drained" "$1"' sh "$OUT_FILE"
+check "deferred precheck queried the queue before deciding" \
+  sh -c 'grep -q -- "--milestone" "$1" && grep -q "state open" "$1"' sh "$GH_LOG"
+check "deferred precheck never evaluates, schedules remediation, or publishes" \
+  sh -c '! grep -q "issue create" "$1" && ! grep -q -- "-X PATCH" "$1" && ! test -s "$2"' \
+  sh "$GH_LOG" "$GATE_LOG"
+check "no completion record appears for a deferred convergence" \
+  test ! -f "$FX/specs/$FEATURE/convergence/complete.json"
+
+reset_scenario
+printf '31\t[%s/T009] Human filed bug\tOPEN\n' "$FEATURE" > "$OPEN_TSV"
+OUT=$(cd "$FX" && PATH="$MOCK_BIN:$PATH" env -u GITHUB_OUTPUT \
+  bash "$PC" "specs/$FEATURE/spec.md" "$R1" 2>"$OUT_ERR")
+STATUS=$?
+check "deferred outcome is printed even outside Actions" \
+  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$OUT"
+
+reset_scenario
+run_pre "specs/$FEATURE/spec.md" "$R1" --json
+check "drained queue maps to outcome=ready with exit 0" \
+  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=ready" "$2"' sh "$STATUS" "$PRE_OUT"
+check "ready precheck keeps the queue-drained JSON summary" \
+  sh -c 'grep -Fq "\"status\":\"queue-drained\"" "$1"' sh "$OUT_FILE"
+check "ready precheck runs no acceptance and creates nothing" \
+  sh -c '! grep -q "issue create" "$1" && ! test -s "$2"' sh "$GH_LOG" "$GATE_LOG"
+
+reset_scenario
+printf -- '- REQ4 Sneaked in after approval.\n' >> "$FX/specs/$FEATURE/spec.md"
+run_pre "specs/$FEATURE/spec.md" "$R1" --json
+check "invalid approval fails closed preserving the precheck exit code" \
+  sh -c '[ "$1" = 1 ] && grep -Fxq "outcome=failed" "$2" && grep -qi "stale" "$3"' \
+  sh "$STATUS" "$PRE_OUT" "$OUT_ERR"
+check "failed precheck is an explicit error annotation" \
+  sh -c 'grep -Fq "::error::" "$1"' sh "$OUT_FILE"
+check "failed precheck never reaches gh" test ! -s "$GH_LOG"
+restore_fixture
+
+reset_scenario
+grep -v 'T004' "$ISSUES_TSV" > "$TMP/filtered" && mv "$TMP/filtered" "$ISSUES_TSV"
+run_pre "specs/$FEATURE/spec.md"
+check "unchecked task without an issue still defers via the adapter" \
+  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$PRE_OUT"
+
+run_pre
+check "usage error fails closed as outcome=failed exit 2" \
+  sh -c '[ "$1" = 2 ] && grep -Fxq "outcome=failed" "$2"' sh "$STATUS" "$PRE_OUT"
 
 # ============================================================================
 echo "== AC2 + AC3: missing requirement despite closed issues becomes a task =="
@@ -467,8 +547,14 @@ if [ -f "$WF" ]; then
     sh -c 'grep -q "workflow_dispatch" "$1" && grep -q "spec:" "$1" && grep -q "revision:" "$1"' sh "$WF"
   check "workflow prefights the implement role" \
     sh -c 'grep -q "agent-preflight.sh verify implement" "$1"' sh "$WF"
-  check "workflow stops cleanly when the queue has not drained" \
-    sh -c 'grep -q -- "--precheck" "$1"' sh "$WF"
+  check "precheck step delegates to the outcome adapter with an id" \
+    sh -c 'grep -q "id: precheck" "$1" && grep -q "scripts/spec-converge-precheck.sh" "$1" && grep -q -- "--precheck" "$1"' sh "$WF"
+  check "agent evaluation only runs on a ready precheck outcome" \
+    sh -c 'grep -B2 "scripts/agent.sh" "$1" | grep -q "steps.precheck.outputs.outcome" ' sh "$WF"
+  check "remediation and publication only run on a ready precheck outcome" \
+    sh -c '[ "$(grep -c "steps.precheck.outputs.outcome == .ready." "$1")" -ge 2 ]' sh "$WF"
+  check "undrained queue no longer bypasses step gating via a bare exit 0" \
+    sh -c '! grep -Fq "exit 0" "$1"' sh "$WF"
   check "workflow runs the converge skill via the shared dispatcher" \
     sh -c 'grep -q "speckit-converge" "$1" && grep -q "scripts/agent.sh" "$1"' sh "$WF"
   check "workflow verifies completion via the entrypoint" \
@@ -499,6 +585,13 @@ check "AGENTS.md points at the convergence entrypoint documentation" \
 check "entrypoint shells out to gh and the shared gate, never to an MCP server" \
   sh -c 'grep -q "gh issue list" "$1" && grep -q "ci-gate.sh" "$1" && ! grep -qi "mcp" "$1"' \
   sh "$REPO_ROOT/scripts/spec-converge.sh"
+
+check "precheck adapter exists and reuses the entrypoint, never gh or the gate" \
+  sh -c 'test -f "$1" && grep -q "spec-converge.sh" "$1" && ! grep -q "gh " "$1" && ! grep -q "ci-gate" "$1"' \
+  sh "$REPO_ROOT/scripts/spec-converge-precheck.sh"
+check "precheck adapter maps all three outcomes explicitly" \
+  sh -c 'grep -q "ready" "$1" && grep -q "deferred" "$1" && grep -q "failed" "$1"' \
+  sh "$REPO_ROOT/scripts/spec-converge-precheck.sh"
 
 echo
 if [ "$failures" -gt 0 ]; then
