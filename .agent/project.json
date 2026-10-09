@@ -1,8 +1,8 @@
 {
   "runtime": {
     "name": "node",
-    "version": "20",
-    "lockfile": ""
+    "version": "22",
+    "lockfile": "package-lock.json"
   },
   "commands": {
     "install": "npm install",
@@ -12,7 +12,10 @@
     "typecheck": ""
   },
   "agent_tooling": {
-    "claude_code": "2.1.295"
+    "claude_code": "2.1.295",
+    "codex_cli": "0.162.0",
+    "gemini_cli": "0.63.0",
+    "opencode_cli": "1.18.35"
   },
   "integrations": ["claude"],
   "model_auth": {
