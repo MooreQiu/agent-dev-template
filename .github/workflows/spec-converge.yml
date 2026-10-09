@@ -110,6 +110,8 @@ jobs:
                echo "::notice::No stored convergence bundle; evaluating fresh" ;;
             4) echo "outcome=evaluate" >> "$GITHUB_OUTPUT"
                echo "::notice::Stored bundle is stale for the current target; evaluating fresh" ;;
+            5) echo "outcome=evaluate" >> "$GITHUB_OUTPUT"
+               echo "::notice::Stored bundle fails the findings schema; discarding it and evaluating fresh" ;;
             *) echo "::error::Stored convergence bundle rejected (exit $rc)" >&2
                exit 1 ;;
           esac
@@ -123,21 +125,33 @@ jobs:
           AGENT=claude scripts/agent.sh "Converge the feature whose approved spec is $SPEC at revision $REVISION on the integrated default branch. Explicitly invoke the /speckit-converge skill, then write your findings as JSON Lines to $FEATURE_DIR/convergence/findings.jsonl following the schema in docs/SPEC_CONVERGE.md: one object per line with id, requirement, kind (missing, regression, or verified), summary, evidence; cite the requirement id exactly as it appears in the approved spec. Evaluate the whole repository against the spec, plan, requirements, and acceptance scenarios; closed issues and merged PRs alone are not evidence of completion. Never modify spec.md, approval.json, plan.md, or tasks.md; report requirements outside the approved spec instead of implementing them. After invoking the skill, record it with: bash scripts/agent-preflight.sh note-invocation implement speckit-converge"
 
       - name: Verify completion and schedule remaining work
+        id: verify
         if: steps.precheck.outputs.outcome == 'ready' && (steps.restore.outputs.outcome == 'evaluate' || steps.restore.outputs.outcome == 'restored')
         run: |
           set +e
           bash scripts/spec-converge.sh "$SPEC" "$REVISION" --findings "$FEATURE_DIR/convergence/findings.jsonl" --budget "$BUDGET" --json
           rc=$?
           set -e
-          if [ "$rc" -eq 4 ]; then
+          # Persist gate for the bind/upload steps below: only a verify that
+          # actually validated the findings may feed the bundle. rc 1 leaves
+          # status unset, so invalid content is never bound or uploaded and
+          # the next run re-evaluates instead of restoring it
+          # (docs/SPEC_ARTIFACTS.md recovery contract).
+          if [ "$rc" -eq 0 ]; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -eq 4 ]; then
+            echo "status=blocked" >> "$GITHUB_OUTPUT"
             echo "::error::Convergence blocked: unresolved requirements were reported as blocked; a human decision is required."
           fi
           exit "$rc"
 
       # Persist findings, evidence, and the completion record as a versioned
       # bundle so a later fresh runner can resume from them (issue #44).
+      # always() only lets the condition decide after a failed (blocked)
+      # verify: without a validated status no bundle is ever bound, so
+      # unusable content cannot be fixed up into a "valid" artifact.
       - name: Bind the convergence bundle manifest
-        if: always() && steps.precheck.outputs.outcome == 'ready'
+        if: always() && steps.precheck.outputs.outcome == 'ready' && (steps.verify.outputs.status == 'ok' || steps.verify.outputs.status == 'blocked')
         run: |
           files=""
           for f in "$FEATURE_DIR"/convergence/findings.jsonl \
@@ -154,7 +168,7 @@ jobs:
           fi
 
       - name: Upload convergence artifacts
-        if: always() && steps.precheck.outputs.outcome == 'ready'
+        if: always() && steps.precheck.outputs.outcome == 'ready' && (steps.verify.outputs.status == 'ok' || steps.verify.outputs.status == 'blocked')
         uses: actions/upload-artifact@v4
         with:
           name: spec-convergence-${{ env.FEATURE }}-${{ github.event.inputs.revision }}

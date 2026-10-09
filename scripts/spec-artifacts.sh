@@ -43,7 +43,9 @@
 # Exit codes: 0 = ok, 1 = artifact rejected (mismatched, corrupt, ambiguous,
 #             or protected), 2 = usage error, 3 = no artifact found
 #             (never uploaded, deleted, or expired), 4 = stale (the bundle is
-#             bound to a different target commit than --target).
+#             bound to a different target commit than --target), 5 = the
+#             bundle content fails the findings schema (convergence):
+#             unusable, the workflow re-evaluates instead of restoring.
 set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -213,6 +215,53 @@ cmd_manifest() { # cmd_manifest <kind> <spec> <revision> [options] <file>...
   log "manifest written: $output ($kind, $FEATURE @ $sha, target $target, $count file(s))"
 }
 
+# --- findings schema gate (mirrors parse_findings in scripts/spec-converge.sh)
+# Valid bindings and hashes cannot tell whether a findings.jsonl is something
+# the converge entrypoint would accept: a line that is not a JSON object, an
+# unknown kind, or a verified line citing a requirement the approved spec
+# lacks makes the entrypoint die while the bundle itself stays "valid".
+# Restoring such a bundle made every later run skip the agent evaluation and
+# re-fail on verify forever, so restore rejects it outright and the workflow
+# re-evaluates (issue #44 recovery contract, docs/SPEC_ARTIFACTS.md).
+FINDINGS_ERR=""
+validate_findings() { # validate_findings <file> <requirement-tokens-file>
+  f=$1; reqs=$2
+  n=0
+  gap_ids=" "
+  while IFS= read -r line; do
+    case "$line" in
+      ''|'{'*) ;;
+      *) FINDINGS_ERR="malformed findings line (not a JSON object): $line"; return 1 ;;
+    esac
+    n=$((n + 1))
+    fkind="$(printf '%s\n' "$line" | sed -n 's/.*"kind": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+    case "$fkind" in
+      missing|regression|verified) ;;
+      *) FINDINGS_ERR="findings line $n has an invalid kind '${fkind:-<empty>}' (expected missing, regression, or verified)"; return 1 ;;
+    esac
+    freq="$(printf '%s\n' "$line" | sed -n 's/.*"requirement": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+    if [ "$fkind" = verified ]; then
+      [ -n "$freq" ] \
+        || { FINDINGS_ERR="verified findings line $n has no requirement"; return 1; }
+      grep -Fxq "$freq" "$reqs" \
+        || { FINDINGS_ERR="verified findings line $n cites requirement $freq, which is not in the approved spec"; return 1; }
+      continue
+    fi
+    fid="$(printf '%s\n' "$line" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+    [ -n "$fid" ] || { FINDINGS_ERR="gap findings line $n has no id"; return 1; }
+    case "$fid" in
+      *[!A-Za-z0-9-]*) FINDINGS_ERR="gap id must be alphanumeric: $fid"; return 1 ;;
+    esac
+    case "$gap_ids" in
+      *" $fid "*) FINDINGS_ERR="duplicate gap id in findings: $fid"; return 1 ;;
+    esac
+    fsum="$(printf '%s\n' "$line" | sed -n 's/.*"summary": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+    [ -n "$fsum" ] || { FINDINGS_ERR="gap $fid has no summary"; return 1; }
+    gap_ids="$gap_ids$fid "
+  done < "$f"
+  return 0
+}
+
 # --- restore: retrieve, validate, and copy the newest bundle -----------------
 cmd_restore() { # cmd_restore <kind> <spec> <revision> [options]
   kind=$1; spec=$2; rev=$3; shift 3
@@ -347,6 +396,16 @@ LISTINGS
   wanted="$(printf '%s\n' "$expect" | LC_ALL=C sort)"
   [ "$actual" = "$wanted" ] \
     || die 1 "ambiguous artifact: bundle contents do not match the manifest listing (unlisted or missing files)"
+
+  # Content-level gate for convergence bundles (issue #44 recovery contract):
+  # a bundle whose findings.jsonl the converge entrypoint would reject must
+  # never be restored as success -- the next run has to re-evaluate.
+  if [ "$kind" = convergence ] && [ -f "$WORK/payload/findings.jsonl" ]; then
+    grep -oE '(FR|SC)-[0-9]+|REQ[0-9]+' "$SPEC" | sort -u > "$WORK/reqs" || true
+    if ! validate_findings "$WORK/payload/findings.jsonl" "$WORK/reqs"; then
+      die 5 "artifact $artifact_id carries findings.jsonl that fails the findings schema: $FINDINGS_ERR; the bundle is unusable -- evaluate fresh (docs/SPEC_ARTIFACTS.md)"
+    fi
+  fi
 
   # Validation complete: copy the payload into the checkout.
   while IFS= read -r p; do

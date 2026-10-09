@@ -32,6 +32,14 @@ restore 逐项校验：kind/feature/spec 路径/revision 必须完全一致；sp
 损坏；束内出现清单未列文件或清单重复条目视为歧义，一律拒绝。清单校验全部
 通过之前不写任何文件，被拒绝的束不留半成品状态。
 
+收敛束在绑定与哈希之外还做**内容校验**：findings.jsonl 必须通过与
+`scripts/spec-converge.sh` 相同的 findings schema（malformed 行、非法
+kind、verified 引用已审批 spec 之外的 requirement、gap 缺 id/summary、
+重复 gap id 一律拒绝）。这类束的绑定与哈希都"合法"，但 restore 绝不能把
+它当成功恢复——否则后续每次运行都会跳过 agent 评估、在 verify 上重新
+失败，形成无法自愈的失败循环；restore 以 exit 5 拒绝，workflow 映射为
+重新评估（见下），重跑必然重新生成。
+
 **已审批 spec（spec.md）与审批记录（approval.json）绝不进入 artifact**，
 restore 也绝不覆写它们——git 是它们唯一的存储。manifest 把
 `specs/<feature>/spec.md` 与 `specs/<feature>/approval.json` 列为受保护
@@ -40,7 +48,9 @@ restore 也绝不覆写它们——git 是它们唯一的存储。manifest 把
 退出码：`0` 成功；`1` 拒绝（不匹配/损坏/歧义/受保护）；`2` 用法错误；
 `3` 找不到 artifact（从未上传、被删或已过期），规划工作流把它映射为"全新
 规划"而非失败；`4` stale——束绑定的 target 与当前 `--target` 不一致，
-收敛必须重新评估而不是静默复用旧结论。
+收敛必须重新评估而不是静默复用旧结论；`5` 束内容（findings.jsonl）未通过
+findings schema 校验——束不可用，收敛工作流把它映射为重新评估（与 stale
+同路），绝不恢复成 success。
 
 ## Workflow 接线
 
@@ -50,8 +60,12 @@ restore 也绝不覆写它们——git 是它们唯一的存储。manifest 把
   路径块只含 manifest.json/plan.md/tasks.md（不含 spec.md）。
 - spec-converge.yml：`actions: read`；precheck ready 之后
   `restore convergence --target "$(git rev-parse HEAD)"`，exit 3/4 → 重新
-  评估（`outcome=evaluate`）、exit 0 → 跳过 agent 评估直接复核
-  （`outcome=restored`）、exit 1 → fail-closed；上传前
+  评估（`outcome=evaluate`）、exit 5 → 束内容不可用，同样重新评估、
+  exit 0 → 跳过 agent 评估直接复核（`outcome=restored`）、exit 1 →
+  fail-closed；持久化由 verify 步骤的 `status` 输出门控——verify 校验过
+  findings（`ok`，或 findings 解析合法但结论为 `blocked`）才允许
+  bind/upload，verify 失败（如 findings 非法）绝不持久化，坏内容不会
+  被固化成"合法"bundle，重跑必然重新评估；上传前
   `manifest convergence --target "$(git rev-parse HEAD)"`，artifact 名
   `spec-convergence-${{ env.FEATURE }}-${{ inputs.revision }}`。
 
