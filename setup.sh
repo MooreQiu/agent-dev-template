@@ -77,6 +77,13 @@ fi
 say "写入模型变量（随时可用 gh variable set 更新，换 provider 只改这里）"
 gh variable set AGENT_MODEL_DEFAULT --repo "$REPO" -b "${AGENT_MODEL_DEFAULT:-glm-5.3[1m]}" >/dev/null 2>&1 && echo "  ✓ AGENT_MODEL_DEFAULT"
 gh variable set AGENT_MODEL_FLASH --repo "$REPO" -b "${AGENT_MODEL_FLASH:-glm-5.3-flash[1m]}" >/dev/null 2>&1 && echo "  ✓ AGENT_MODEL_FLASH"
+# 可选：推理 effort 默认（low/medium/high/xhigh/max）；不设 = CLI 默认
+if [ -n "${AGENT_EFFORT_DEFAULT:-}" ]; then
+  gh variable set AGENT_EFFORT_DEFAULT --repo "$REPO" -b "$AGENT_EFFORT_DEFAULT" >/dev/null 2>&1 \
+    && echo "  ✓ AGENT_EFFORT_DEFAULT"
+else
+  echo "  • AGENT_EFFORT_DEFAULT 未设置（可选：gh variable set AGENT_EFFORT_DEFAULT -b high）"
+fi
 
 if [ "$WITH_PROJECT" = 1 ]; then
   say "创建 Projects v2 看板（Agent Queue，可选组件）"
