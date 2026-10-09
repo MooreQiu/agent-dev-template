@@ -318,8 +318,9 @@ printf '31\t[%s/T009] Human filed bug\tOPEN\n' "$FEATURE" > "$OPEN_TSV"
 OUT=$(cd "$FX" && PATH="$MOCK_BIN:$PATH" env -u GITHUB_OUTPUT \
   bash "$PC" "specs/$FEATURE/spec.md" "$R1" 2>"$OUT_ERR")
 STATUS=$?
+printf '%s\n' "$OUT" > "$OUT_FILE"
 check "deferred outcome is printed even outside Actions" \
-  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$OUT"
+  sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$OUT_FILE"
 
 reset_scenario
 run_pre "specs/$FEATURE/spec.md" "$R1" --json
@@ -343,7 +344,7 @@ restore_fixture
 
 reset_scenario
 grep -v 'T004' "$ISSUES_TSV" > "$TMP/filtered" && mv "$TMP/filtered" "$ISSUES_TSV"
-run_pre "specs/$FEATURE/spec.md"
+run_pre "specs/$FEATURE/spec.md" "$R1"
 check "unchecked task without an issue still defers via the adapter" \
   sh -c '[ "$1" = 0 ] && grep -Fxq "outcome=deferred" "$2"' sh "$STATUS" "$PRE_OUT"
 
