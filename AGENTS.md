@@ -35,7 +35,7 @@
 
 ## 规格驱动（Spec Kit）
 
-新功能优先走 speckit 流程：`/speckit-specify` →（可选 `/speckit-clarify`）→ `/speckit-plan` → `/speckit-tasks` →（可选 `/speckit-analyze`）→ `/speckit-implement`，产物提交到 `specs/`；已审批的 spec 可用 `scripts/spec-start.sh` 从不可变 revision 启动自主规划并生成可调度的 issues（用法与决策政策见 [docs/SPEC_START.md](docs/SPEC_START.md)）；任务队列排空后可用 `scripts/spec-converge.sh` 对照已审批 spec 验收整体完成度、把缺口变成去重的修复任务或发布完成状态（findings 契约与预算见 [docs/SPEC_CONVERGE.md](docs/SPEC_CONVERGE.md)）。
+新功能优先走 speckit 流程：`/speckit-specify` →（可选 `/speckit-clarify`）→ `/speckit-plan` → `/speckit-tasks` →（可选 `/speckit-analyze`）→ `/speckit-implement`，产物提交到 `specs/`；已审批的 spec 可用 `scripts/spec-start.sh` 从不可变 revision 启动自主规划并生成可调度的 issues（用法与决策政策见 [docs/SPEC_START.md](docs/SPEC_START.md)）；任务队列排空后可用 `scripts/spec-converge.sh` 对照已审批 spec 验收整体完成度、把缺口变成去重的修复任务或发布完成状态（findings 契约与预算见 [docs/SPEC_CONVERGE.md](docs/SPEC_CONVERGE.md)）；单一 feature 从审批到完成的全流程状态可用只读的 `scripts/spec-track.sh` 一览（状态机与 next-action 语义见 [docs/SPEC_TRACK.md](docs/SPEC_TRACK.md)）。
 
 日常小任务不必走 spec，直接 issue + TDD。
 
