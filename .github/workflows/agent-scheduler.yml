@@ -100,7 +100,15 @@ jobs:
           scripts/pr-repair.sh dispatch "$PR" --rejected-head "$HEAD_SHA" --target "origin/$BASE" || rc=$?
           case "$rc" in
             0) echo "PR #$PR 修复路径收敛（已修复/跳过/受控阻塞）" ;;
-            *) echo "PR #$PR 修复运行失败（rc=$rc）；保留 agent-failed 标签，等待下一事件或周期 sweep 重试" ;;
+            *)
+              # 修复派发失败不能被 `|| rc=$?` 吞掉（issue #78，同 sweep
+              # 的 issue #75 修法）：即时路径是退回 PR 的第一次修复机会，
+              # 失败必须以非零收场让监控能抓到；agent-failed 标签保留，
+              # 兜底仍由周期 sweep 重试。
+              echo "PR #$PR 修复运行失败（rc=$rc）；保留 agent-failed 标签，等待下一事件或周期 sweep 重试"
+              echo "::error::repair dispatch failed; a rejected PR could not be repaired, see logs above"
+              exit 1
+              ;;
           esac
 
   advance:
