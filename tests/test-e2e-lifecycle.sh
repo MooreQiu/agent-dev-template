@@ -858,6 +858,13 @@ EOIGN
   git clone -q "$fx/origin/origin.git" "$fx/runner"
   git -C "$fx/runner" config user.name runner
   git -C "$fx/runner" config user.email runner@example.com
+  if [ "$variant" = repair ]; then
+    # A second worker checkout: duplicate dispatch events arrive at their
+    # own clone, exactly like two workflow runs on the shared origin.
+    git clone -q "$fx/origin/origin.git" "$fx/runner2"
+    git -C "$fx/runner2" config user.name runner2
+    git -C "$fx/runner2" config user.email runner2@example.com
+  fi
   git clone -q "$fx/origin/origin.git" "$fx/verify"
   git -C "$fx/verify" config user.name verifier
   git -C "$fx/verify" config user.email verifier@example.com
@@ -1548,7 +1555,7 @@ while [ "$_claims" -lt 40 ]; do
   sleep 0.5
 done
 REPAIR_MODE=no-op REPAIR_ISSUE=92 \
-  in_dir "$RUNNER_B" bash scripts/pr-repair.sh dispatch 103 -- bash scripts/harness-repair.sh > "$TMP/dup92.log" 2>&1
+  in_dir "$FXB/runner2" bash scripts/pr-repair.sh dispatch 103 -- bash scripts/harness-repair.sh > "$TMP/dup92.log" 2>&1
 dup92_rc=$?
 wait "$slow_pid"
 slow_rc=$?
