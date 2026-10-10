@@ -20,7 +20,9 @@
 # --json              print a single machine-readable JSON summary on stdout
 #
 # Statuses (JSON "status"):
-#   complete               no gaps remain and integrated acceptance passed
+#   complete               no gaps remain, integrated acceptance passed, and
+#                          every approved requirement has a verified evidence
+#                          record (issue #45)
 #   remediation-scheduled  deduplicated remediation issues entered the queue
 #   blocked                unresolved requirements are reported as blocked
 #
@@ -199,8 +201,20 @@ parse_findings() {
       [ -n "$freq" ] || die 1 "verified findings line $n has no requirement"
       grep -Fxq "$freq" "$WORK/reqs" \
         || die 1 "verified findings line $n cites requirement $freq, which is not in the approved spec"
-      if [ -n "$fev" ] && ! grep -Fq "$freq	" "$WORK/verified.tsv" 2>/dev/null; then
-        printf '%s\t%s\n' "$freq" "$fev" >> "$WORK/verified.tsv"
+      # Issue #45: a verified record must identify the verification
+      # method/result and point at evidence that actually exists.
+      [ -n "$fsum" ] \
+        || die 1 "verified findings line $n has no verification method/result"
+      [ -n "$fev" ] \
+        || die 1 "verified findings line $n has no evidence location"
+      case "$fev" in
+        /*|../*|*/../*|*/..)
+          die 1 "verified findings line $n evidence must be a repository-relative path: $fev" ;;
+      esac
+      [ -e "$fev" ] \
+        || die 1 "verified findings line $n cites evidence $fev, which does not exist in the repository"
+      if ! grep -Fq "$freq	" "$WORK/verified.tsv" 2>/dev/null; then
+        printf '%s\t%s\t%s\n' "$freq" "$fev" "$fsum" >> "$WORK/verified.tsv"
       fi
       continue
     fi
@@ -330,13 +344,42 @@ if [ "$ACCEPTANCE_RC" -ne 0 ]; then
   log "acceptance failure synthesized as regression gap integrated-acceptance"
 fi
 
+# Issue #45: a green integration run alone never establishes an approved
+# requirement. Every requirement needs a verified evidence record; the ones
+# an agent gap already cites come back with that gap, every other
+# unevidenced requirement becomes its own remediation instead of being
+# filled with generic acceptance evidence.
+while IFS= read -r req; do
+  [ -n "$req" ] || continue
+  awk -F'\t' -v r="$req" '$1 == r { found = 1; exit } END { exit !found }' \
+    "$WORK/verified.tsv" && continue
+  covered=""
+  j=1
+  while [ "$j" -le "$GAP_COUNT" ]; do
+    if [ "$(cat "$WORK/gap.$j.req")" = "$req" ]; then covered=1; break; fi
+    j=$((j + 1))
+  done
+  [ -z "$covered" ] || continue
+  GAP_COUNT=$((GAP_COUNT + 1))
+  printf 'evidence-%s\n' "$req" > "$WORK/gap.$GAP_COUNT.id"
+  printf '%s\n' "$req"         > "$WORK/gap.$GAP_COUNT.req"
+  printf 'missing\n'           > "$WORK/gap.$GAP_COUNT.kind"
+  printf 'No verified evidence for requirement %s; a green integration run alone does not establish it\n' "$req" \
+    > "$WORK/gap.$GAP_COUNT.sum"
+  printf '\n'                  > "$WORK/gap.$GAP_COUNT.ev"
+  log "requirement $req has no verified evidence record; synthesized remediation gap evidence-$req"
+done < "$WORK/reqs"
+
 emit_json() { # emit_json <status> <created-list> <skipped-list> <blocked-list>
   printf '{"feature":"%s","spec":"%s","revision":"%s","status":"%s","acceptance":"%s","created":[%s],"skipped":[%s],"blocked":[%s],"dry_run":false}\n' \
     "$FEATURE" "$SPEC" "$SHA" "$1" "$ACCEPTANCE" "${2#,}" "${3#,}" "${4#,}"
 }
 
-# --- true completion: no gaps remain and acceptance passed --------------------
+# --- true completion: no gaps remain, acceptance passed, and every approved
+# requirement carries a verified evidence record (issue #45) -------------------
 if [ "$GAP_COUNT" -eq 0 ]; then
+  TARGET="$(git rev-parse --verify HEAD^{commit})" \
+    || die 1 "cannot resolve the validated code commit (HEAD)"
   COMPLETE_DIR="$FEATURE_DIR/convergence"
   mkdir -p "$COMPLETE_DIR" || die 1 "cannot create $COMPLETE_DIR"
   {
@@ -352,9 +395,10 @@ if [ "$GAP_COUNT" -eq 0 ]; then
     while IFS= read -r req; do
       [ -n "$req" ] || continue
       ev="$(awk -F'\t' -v r="$req" '$1 == r { print $2; exit }' "$WORK/verified.tsv")"
-      if [ -n "$ev" ]; then st=verified; else st=integrated-acceptance; ev="$EVIDENCE_REL/gate.json"; fi
+      method="$(awk -F'\t' -v r="$req" '$1 == r { print $3; exit }' "$WORK/verified.tsv")"
       if [ "$first" -eq 1 ]; then first=0; else printf ',\n'; fi
-      printf '    {"id": "%s", "status": "%s", "evidence": "%s"}' "$req" "$st" "$ev"
+      printf '    {"id": "%s", "status": "verified", "method": "%s", "evidence": "%s", "revision": "%s", "commit": "%s"}' \
+        "$req" "$method" "$ev" "$SHA" "$TARGET"
     done < "$WORK/reqs"
     printf '\n  ]\n}\n'
   } > "$COMPLETE_DIR/complete.json"

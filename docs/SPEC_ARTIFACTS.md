@@ -35,7 +35,9 @@ restore 逐项校验：kind/feature/spec 路径/revision 必须完全一致；sp
 收敛束在绑定与哈希之外还做**内容校验**：findings.jsonl 必须通过与
 `scripts/spec-converge.sh` 相同的 findings schema（malformed 行、非法
 kind、verified 引用已审批 spec 之外的 requirement、gap 缺 id/summary、
-重复 gap id 一律拒绝）。这类束的绑定与哈希都"合法"，但 restore 绝不能把
+重复 gap id 一律拒绝；issue #45 起 verified 行还必须有核验方法
+（summary）与证据位置（evidence），且该位置在检出或束负载里真实存在）。
+这类束的绑定与哈希都"合法"，但 restore 绝不能把
 它当成功恢复——否则后续每次运行都会跳过 agent 评估、在 verify 上重新
 失败，形成无法自愈的失败循环；restore 以 exit 5 拒绝，workflow 映射为
 重新评估（见下），重跑必然重新生成。

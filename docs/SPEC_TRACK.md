@@ -38,14 +38,19 @@ scripts/spec-track.sh specs/<feature>/spec.md [--json]
 
 blocked 状态的证据就是 durable 工件本身：stderr 逐条列出 blocked issue（编号 + 标题前缀 `[<feature>/<id>]`），JSON 给出 `blocked_issues` 计数；预算耗尽的原因、findings 引用都在 blocked issue 正文里（见 docs/SPEC_CONVERGE.md）。**可恢复**：人解决并关闭 blocked issue 后，下一次追踪自动回到 converging（autonomous=true）——测试覆盖该转移。approval 侧同理：人补审批记录后链条从 planning 继续。
 
-## 完成判定的证据校验（issue #24 验收第 6 条）
+## 完成判定的证据校验（issue #24 验收第 6 条 + issue #45 记录校验）
 
 只有当 `specs/<feature>/convergence/complete.json` 同时满足才报 complete：
 
-- 顶层 `status` 为 `complete` 且 `acceptance` 为 `pass`（集成证据）；
-- 已审批 spec 中识别出的**每个**需求编号（`FR-###`/`SC-###`/`REQ#`，与 spec-converge 同一识别器）在 `requirements` 里有一条**非空** evidence（需求级证据），缺一条即拒绝。
+- 顶层 `status` 为 `complete` 且 `acceptance` 为 `pass`（整项目集成证据，独立保留、不替代需求级证据）；
+- 已审批 spec 中识别出的**每个**需求编号（`FR-###`/`SC-###`/`REQ#`，与 spec-converge 同一识别器）在 `requirements` 里有一条**可通过校验的 verified 证据记录**，字段要求（issue #45）：
+  - `status` 为 `verified`（`integrated-acceptance` 之类的通用集成回填一律不算）；
+  - `method` 非空（核验方法与结果）；
+  - `evidence` 为合法仓库相对路径且**文件真实存在**（不存在/绝对路径/含 `..`/为空即拒绝）；
+  - `revision` 与审批记录里的已审批 revision **完全一致**（绑定漂移即拒绝）;
+  - `commit` 能解析为真实 commit 且**在当前 HEAD 历史内**（`git merge-base --is-ancestor`）——不存在或已不在历史中的 stale commit 即拒绝。
 
-记录被拒（缺需求、空证据、acceptance 非 pass）→ 状态回落 converging，`warnings` 点名缺失项，next=converge（重跑收敛）。里程碑仍 open 只是 advisory warning，不否定本地记录（spec-converge 关里程碑本就是 best-effort）。
+记录被拒（缺需求、缺/错字段、证据不存在、revision 不匹配、commit 缺失或 stale、acceptance 非 pass）→ 状态回落 converging，`warnings` 点名缺失项，next=converge（重跑收敛）。里程碑仍 open 只是 advisory warning，不否定本地记录（spec-converge 关里程碑本就是 best-effort）。
 
 ## 与其他 issue 的边界
 
@@ -56,4 +61,4 @@ blocked 状态的证据就是 durable 工件本身：stderr 逐条列出 blocked
 
 ## 验收测试
 
-`tests/test-spec-track.sh`（`npm test` 一并运行）：用法/输入门禁、审批门（缺失/无 approver/stale → awaiting-approval，且不访问远程）、AC1 链路走查（planning→scheduling→in-progress→converging→complete，审批后每一步 autonomous=true）、修复 issue 开着时仍 in-progress（next=sweep）、追踪只读且重复运行输出一致、blocked 显式且列出证据 issue、关闭 blocked 后恢复 converging、完成记录校验（缺需求/空证据/acceptance fail → 拒绝，齐全 → complete）、里程碑 open 仅 warning、JSON 单行契约、workflow/文档接线与 gh 只读访问。
+`tests/test-spec-track.sh`（`npm test` 一并运行）：用法/输入门禁、审批门（缺失/无 approver/stale → awaiting-approval，且不访问远程）、AC1 链路走查（planning→scheduling→in-progress→converging→complete，审批后每一步 autonomous=true）、修复 issue 开着时仍 in-progress（next=sweep）、追踪只读且重复运行输出一致、blocked 显式且列出证据 issue、关闭 blocked 后恢复 converging、完成记录校验（缺需求/空证据/acceptance fail/通用 integrated-acceptance 回填/证据位置不存在/revision 不匹配/commit 缺失·不存在·stale/缺 method → 全部拒绝回落 converging，齐全绑定 → complete）、里程碑 open 仅 warning、JSON 单行契约、workflow/文档接线与 gh 只读访问。

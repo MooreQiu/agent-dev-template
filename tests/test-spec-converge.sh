@@ -415,7 +415,7 @@ echo "== AC2: integration regressions synthesize a gap with evidence =="
 reset_scenario
 verified_findings
 printf '1\n' > "$GATE_RC"
-run_sc "specs/$FEATURE/spec.md" "$R1" --json
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
 check "failing integrated acceptance schedules remediation (exit 0)" \
   sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "json records the failed acceptance" \
@@ -556,7 +556,7 @@ check "completion runs the integrated acceptance" test -s "$GATE_LOG"
 check "approved spec, plan, tasks and approval record stay immutable" \
   sh -c '[ "$1" = "$2" ]' sh "$BEFORE" "$(immutable_hashes)"
 
-run_sc "specs/$FEATURE/spec.md" "$R1"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
 check "human output announces PROJECT-COMPLETE" \
   sh -c 'grep -q "PROJECT-COMPLETE" "$1"' sh "$OUT_FILE"
 restore_fixture

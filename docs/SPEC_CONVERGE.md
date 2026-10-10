@@ -57,11 +57,12 @@ workflow 的预检步骤调用 `scripts/spec-converge-precheck.sh <spec> <revisi
 
 ```json
 {"id": "G001", "requirement": "REQ2", "kind": "missing", "summary": "Signed export is not implemented", "evidence": "src/export has no signing path"}
-{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "npm test green on target branch"}
+{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end export flow exercised; signature verified", "evidence": "specs/016-demo/verification/REQ1-e2e.log"}
 ```
 
 - `kind`：`missing`（需求未实现）、`regression`（集成后回归）、`verified`（已核验，提供需求→证据追溯）。
 - `requirement` 必须逐字引用已审批 spec 里的需求编号（模板支持的 `FR-###`、`SC-###`、`REQ#` 形式均会被识别）。引用了 spec 里不存在的编号 = 超出审批范围：**不会**变成任务，而是 blocked 报告（扩展范围需要重新审批）。
+- **verified 行的额外契约（issue #45）**：`summary` 必须写明核验方法与结果；`evidence` 必须是**仓库相对路径且文件真实存在**（提交一份核验日志或引用仓库内既有产物），路径为空、绝对路径、含 `..` 或指向不存在的文件都会被入口 fail-closed 拒绝。
 - `id` 在文件内唯一；缺口身份是 `<feature>/<id>`（如 `016-demo/G001`），去重按标题前缀匹配，跨 feature 不冲突。
 - 集成验收（`ci-gate.sh run`，即 `.agent/project.json` 配置的 install/build/test/lint/typecheck）失败时会自动合成一条 `integrated-acceptance` 回归缺口，证据指向 `convergence/evidence/gate.json`。
 
@@ -74,9 +75,10 @@ workflow 的预检步骤调用 `scripts/spec-converge-precheck.sh <spec> <revisi
 
 ## 完成判定与追溯
 
-只有同时满足才发布 complete：**没有任何缺口**（agent 未发现缺口，且集成验收通过）。
+只有同时满足才发布 complete：**没有任何缺口**（agent 未发现缺口，且集成验收通过），且**每个已审批需求都有 verified 证据记录**（issue #45）。
 
-- 本地完成记录：`specs/<feature>/convergence/complete.json`，其中 `requirements` 列出 spec 中每个需求编号及证据——verified 发现引用 agent 证据，其余回退到集成验收证据（`convergence/evidence/gate.json`）。证据目录已加入 `.gitignore`，不污染工作区。
+- **需求级证据记录**：`complete.json` 的 `requirements` 里每条记录标识需求 id、核验方法与结果（`method`，来自 verified 发现的 summary）、证据位置（`evidence`，真实存在的仓库相对路径）、已审批 spec revision（`revision`）与验证过的代码 commit（`commit`，即验收通过时的 HEAD）。**集成验收通过本身绝不回填未证实的需求**——旧版"回退到 gate.json"的路径已删除：没有 verified 记录的需求会被合成为 `evidence-<REQ>` 修复缺口（已被其他 gap 引用的需求除外，随该 gap 一起修复），回到收敛循环；预算耗尽照常转 blocked。
+- **整体验收独立保留**：`complete.json` 顶层的 `acceptance: pass` 与 `evidence: convergence/evidence/gate.json` 记录的是**全项目**集成验收，与需求级证据分开，互不替代。
 - 远端可见状态：关闭以 feature 命名的 milestone（`gh api` PATCH），人类在 milestone 视图一眼看到项目完成。
 - 全程不改动 spec.md / plan.md / tasks.md / approval.json（测试用 blob 哈希前後对比保证）。
 
@@ -88,4 +90,4 @@ workflow 的预检步骤调用 `scripts/spec-converge-precheck.sh <spec> <revisi
 
 ## 验收测试
 
-`tests/test-spec-converge.sh`（`npm test` 一并运行）：审批门禁（缺失/过期）、队列排空（milestone 内 open issue、无 issue 的未勾选任务、open 修复工作不重复创建）、closed issue 之外的缺失需求、集成回归（验收失败合成缺口 + 证据）、修复重跑去重（closed attempt 后开新 attempt）、有限预算耗尽转 blocked（含 blocked 报告去重）、超出审批范围转 blocked、真完成（complete.json 需求→证据追溯、关闭 milestone、spec/plan/tasks 不可变）、验收失败压过 verified 发现、findings 契约校验（未知 kind / 重复 id / 未知需求编号）、非法 budget、预检 outcome 行为（deferred/ready/failed 三态：未排空跳过评估与发布、排空走正常路径、门禁失败 fail closed）、workflow / 角色 / 文档接线。
+`tests/test-spec-converge.sh`（`npm test` 一并运行）：审批门禁（缺失/过期）、队列排空（milestone 内 open issue、无 issue 的未勾选任务、open 修复工作不重复创建）、closed issue 之外的缺失需求、集成回归（验收失败合成缺口 + 证据）、修复重跑去重（closed attempt 后开新 attempt）、有限预算耗尽转 blocked（含 blocked 报告去重）、超出审批范围转 blocked、绿色集成验收填不了未证实需求（合成 `evidence-<REQ>` 修复缺口 + 重试去重）、全需求证据齐全的真完成（complete.json 记录 method/evidence/revision/commit、整体验收独立保留、关闭 milestone、spec/plan/tasks 不可变）、验收失败压过 verified 发现、findings 契约校验（未知 kind / 重复 id / 未知需求编号 / verified 缺 method 或 evidence / evidence 路径不存在或非法）、非法 budget、预检 outcome 行为（deferred/ready/failed 三态：未排空跳过评估与发布、排空走正常路径、门禁失败 fail closed）、workflow / 角色 / 文档接线。
