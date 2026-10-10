@@ -39,6 +39,17 @@
 # Unlike merge it does not re-run ci-gate.sh check: the gate is surfaced as
 # its own status check and re-verified by the merge decider regardless.
 #
+# "merge" (issue #84) also closes the issues the merged PR links via
+# Closes/Fixes/Resolves in its body -- but only when the merge did NOT run
+# under the GitHub App installation token (GH_AUTH_IDENTITY, exported by
+# scripts/app-auth.sh): GitHub already auto-closes linked issues for PRs
+# merged as an App, while PRs created and merged with the plain actions
+# GITHUB_TOKEN leave them open (the closing keywords are not honored --
+# found by the issue #52 smoke test). Closing is best-effort: an unreadable
+# body, an already-closed issue or a non-issue target warn on stderr and
+# never turn a merged PR into a failure, and nothing is closed when the
+# merge itself fails or the verdict is REQUEST_CHANGES.
+#
 # Usage:
 #   scripts/review-verdict.sh write <pr> --reviewer-output FILE --head-sha SHA
 #                                  [--artifact FILE] [--evidence-dir DIR]
@@ -372,6 +383,43 @@ if [ "$MODE" = status ]; then
   die 5 "posting the native review status for PR #$PR failed"
 fi
 
+# -------------------------------------------- linked-issue closing (#84) ---
+# linked_issues <body-file>: print the numbers of the issues the PR body
+# links with GitHub's closing keywords (close/closes/closed, fix/fixes/
+# fixed, resolve/resolves/resolved, any case, optional colon), same-
+# repository references only -- "MooreQiu/other#7" and keyword-less
+# mentions never count -- deduplicated, ascending, one per line.
+linked_issues() { # linked_issues <body-file>
+  node -e '
+    const fs = require("fs");
+    const body = fs.readFileSync(process.argv[1], "utf8");
+    const re = /(?:^|[^\w\/#])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \t]*:?[ \t]*#(\d+)\b/gi;
+    const seen = new Set();
+    let m;
+    while ((m = re.exec(body)) !== null) seen.add(Number(m[1]));
+    process.stdout.write([...seen].sort((a, b) => a - b).join("\n"));
+  ' "$1"
+}
+
+close_linked_issues() { # close_linked_issues <pr> <repo> -- best-effort
+  linked_body_file="$(mktemp "${TMPDIR:-/tmp}/review-verdict-prbody.XXXXXX")"
+  if ! gh pr view "$1" --repo "$2" --json body --jq .body \
+    >"$linked_body_file" 2>/dev/null; then
+    rm -f "$linked_body_file"
+    echo "review-verdict: warning: cannot read the body of PR #$1; its linked issue (if any) stays open" >&2
+    return 0
+  fi
+  linked_numbers="$(linked_issues "$linked_body_file")"
+  rm -f "$linked_body_file"
+  for linked_issue_no in $linked_numbers; do
+    if gh issue close "$linked_issue_no" --repo "$2" >/dev/null 2>&1; then
+      echo "closed linked issue #$linked_issue_no (closing keyword in the body of PR #$1)"
+    else
+      echo "review-verdict: warning: could not close issue #$linked_issue_no (already closed or not an issue); continuing" >&2
+    fi
+  done
+}
+
 # --------------------------------------------------------- merge mode ---
 GATE_SCRIPT="$(dirname "$0")/ci-gate.sh"
 if [ -n "$GATE_TARGET" ]; then
@@ -390,6 +438,14 @@ if [ "$A_VERDICT" = "APPROVE" ]; then
       die 5 "merge of PR #$PR failed"
   fi
   echo "approved verdict verified for head $A_HEAD (run $A_RUN); merged"
+  # Issue #84: GitHub auto-closes linked issues only for PRs merged as a
+  # human or a GitHub App. Skip the explicit pass under the App token
+  # (GH_AUTH_IDENTITY=app); close them ourselves under the plain
+  # GITHUB_TOKEN -- or when no marker exists (legacy caller), where closing
+  # an already-closed issue is harmless but leaving it open is not.
+  if [ "${GH_AUTH_IDENTITY:-}" != "app" ]; then
+    close_linked_issues "$PR" "$REPO"
+  fi
 else
   echo "review rejected PR #$PR (head $A_HEAD); labeled agent-failed"
   gh pr edit "$PR" --add-label agent-failed ||

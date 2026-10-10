@@ -31,7 +31,7 @@ scripts/build-bundle.sh --version 0.1.0 [--revision <完整commit SHA>] \
 | 运行时指令 | `AGENTS.md`、`CLAUDE.md` |
 | 指南 | `README.md`、`INSTALL.md`、`CONTRIBUTING.md`、`docs` |
 | 许可证 | `LICENSE` |
-| 包元数据 | `package.json`（构建时盖版本号） |
+| 包元数据 | `package.json`（构建时盖版本号）、`package-lock.json`（`.agent/project.json` 声明的锁文件，让干净安装出的默认配置通过 `agent-preflight verify-project` 门） |
 | Agent 角色配置 | `.agent` |
 | 技能与本地命令 | `.claude/commands`、`.claude/skills`、`.codex/skills` |
 | 安装/运行脚本 | `setup.sh`、`deploy.sh`、`scripts` |

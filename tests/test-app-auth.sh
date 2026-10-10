@@ -99,6 +99,12 @@ HELPER="$(git config --global credential.helper)"
 [ "$HELPER" = '!gh auth git-credential' ] \
   && pass "git credential helper wired to gh (token never hits disk)" \
   || fail "git credential helper wired to gh (token never hits disk)" "helper=$HELPER"
+# Issue #84: the identity marker lets the merge decider tell the App
+# installation token (GitHub auto-closes linked issues on merge) apart from
+# the plain GITHUB_TOKEN fallback (the decider must close them itself).
+grep -q '^GH_AUTH_IDENTITY=app$' "$ENVF" \
+  && pass "app path marks GH_AUTH_IDENTITY=app (GITHUB_ENV)" \
+  || fail "app path marks GH_AUTH_IDENTITY=app (GITHUB_ENV)" "env file: $(cat "$ENVF" 2>/dev/null)"
 
 # --- AC: explicit APP_INSTALLATION_ID skips discovery ---
 : >"$API_CALLS"
@@ -125,6 +131,9 @@ fi
 grep -q '^GH_TOKEN=ghs_fallback_token$' "$ENVF" \
   && pass "fallback exports GITHUB_TOKEN as GH_TOKEN" \
   || fail "fallback exports GITHUB_TOKEN as GH_TOKEN" "env file: $(cat "$ENVF" 2>/dev/null)"
+grep -q '^GH_AUTH_IDENTITY=github-token$' "$ENVF" \
+  && pass "fallback marks GH_AUTH_IDENTITY=github-token (GITHUB_ENV)" \
+  || fail "fallback marks GH_AUTH_IDENTITY=github-token (GITHUB_ENV)" "env file: $(cat "$ENVF" 2>/dev/null)"
 case "$OUT_FB" in
   *GITHUB_APP_SETUP* | *GITHUB_APP_SETUP.md*) pass "fallback message points to setup docs" ;;
   *) fail "fallback message points to setup docs" "out=$OUT_FB" ;;

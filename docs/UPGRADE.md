@@ -73,14 +73,15 @@ cd agent-dev-template-<版本>
 务、无 webhook），删完即干净。
 
 1. **停用并删除 workflow**（`gh workflow disable` 或直接删文件）：
-   deploy 路线带来 4 个——`claude.yml`、`agent-sweep.yml`、
-   `pr-review.yml`、`project-sync.yml`；从模板新建的仓库还有全部
-   `.github/workflows/`（ci.yml、agent-scheduler.yml、spec-*.yml 等）。
-2. **删除体系文件**：deploy 路线是 ITEMS 清单里的 15 项（`AGENTS.md`、
-   `CLAUDE.md`、`INSTALL.md`、`docs/`、`scripts/`、`.specify/`、
+   deploy 路线带来 6 个——`ci.yml`、`claude.yml`、`agent-sweep.yml`、
+   `pr-review.yml`、`review-watchdog.yml`、`project-sync.yml`；从模板新建的仓库还有全部
+   `.github/workflows/`（agent-scheduler.yml、spec-*.yml 等）。
+2. **删除体系文件**：deploy 路线是 ITEMS 清单里的 20 项（`AGENTS.md`、
+   `CLAUDE.md`、`INSTALL.md`、`.agent/`、`docs/`、`scripts/`、`.specify/`、
    `.claude/commands/`、`.claude/skills/`、`.github/ISSUE_TEMPLATE/`、
-   `.github/PULL_REQUEST_TEMPLATE.md`、上述 4 个 workflow、`setup.sh`）；
-   模板路线另加 `.agent/`、`.codex/`。
+   `.github/PULL_REQUEST_TEMPLATE.md`、上述 6 个 workflow、`package.json`、
+   `package-lock.json`、`setup.sh`）；
+   模板路线另加 `.codex/`。
 3. **删除 labels**：
 
 ```bash
@@ -109,8 +110,9 @@ gh variable delete AGENT_MODEL_FLASH
 
 - **你的项目本身**：源代码、`README`、`LICENSE`、`.gitignore` 等——
   `deploy.sh` 的 ITEMS 刻意不包含它们；
-- **`.agent/project.json`**：你的运行时/构建/测试命令是部署后手写的，
-  模板不携带、不覆盖（模板路线的占位版除外）；
+- **`.agent/project.json`**：deploy/模板路线都携带一份默认 npm 配置，其中
+  运行时/构建/测试命令是给消费者替换的起点（INSTALL.md 必做人工步骤）；
+  你已定制的版本部署时一律不覆盖；
 - 所有 `!` 冲突文件（见上）；认领/状态 ref（`refs/agent-claims/*`、
   `refs/agent-status/*`）随 git 仓库保留，卸载 workflow 后不再有人读写。
 
