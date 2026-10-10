@@ -96,10 +96,10 @@ if [ -f "$POLICY" ]; then
         contains "$POLICY" '[Tt]rial'
     check "policy documents version stamping at bundle build" \
         contains "$POLICY" 'build-bundle'
-    check "policy tracks the lockfile stamping follow-up (#86)" \
-        contains "$POLICY" '#86'
-    check "policy does not overclaim bundle lockfile stamping" \
-        no_match "$POLICY" '盖进.*package\.json` 与 `package-lock\.json'
+    check "policy claims both bundle copies get stamped" \
+        contains "$POLICY" 'package\.json` 与 `package-lock\.json'
+    check "builder actually stamps the shipped lockfile" \
+        grep -q 'package-lock' scripts/build-bundle.sh
     check "policy covers the repository package metadata pair" \
         contains "$POLICY" 'package-lock\.json'
     check "policy requires package.json and package-lock.json agreement" \
