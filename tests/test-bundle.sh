@@ -209,6 +209,40 @@ else
   fail "package.json inside bundle stamped with $VERSION"
 fi
 
+# Lockfile stamping (issue #83): the shipped package-lock.json must agree
+# with the stamped package.json at both root occurrences.
+LOCKFILE="$BUNDLE_DIR/package-lock.json"
+if [ -f "$LOCKFILE" ]; then
+  pass "bundle ships package-lock.json"
+else
+  fail "bundle ships package-lock.json"
+fi
+# Top-level version field (2-space indent in a lockfileVersion 3 lockfile).
+if grep -q "^  \"version\": \"$VERSION\"" "$LOCKFILE" 2>/dev/null; then
+  pass "lockfile top-level version stamped with $VERSION"
+else
+  fail "lockfile top-level version stamped with $VERSION"
+fi
+# Root packages[""] version field (6-space indent).
+if grep -q "^      \"version\": \"$VERSION\"" "$LOCKFILE" 2>/dev/null; then
+  pass "lockfile packages[\"\"] version stamped with $VERSION"
+else
+  fail "lockfile packages[\"\"] version stamped with $VERSION"
+fi
+# Dependency entries are untouched: compared to the source lockfile the only
+# changed lines are the two root version fields (2 removed + 2 added).
+diff "$FIX/package-lock.json" "$LOCKFILE" >"$WORK/lock.diff" 2>&1
+if [ "$(grep -c '^[<>]' "$WORK/lock.diff")" -eq 4 ] \
+     && grep -q '^<   "version": "0.0.0"' "$WORK/lock.diff" \
+     && grep -q '^<       "version": "0.0.0"' "$WORK/lock.diff" \
+     && grep -q '^>   "version": "'"$VERSION"'"' "$WORK/lock.diff" \
+     && grep -q '^>       "version": "'"$VERSION"'"' "$WORK/lock.diff"; then
+  pass "lockfile diff touches exactly the two root version fields"
+else
+  fail "lockfile diff touches exactly the two root version fields" \
+    "$(head -4 "$WORK/lock.diff")"
+fi
+
 # --- AC5: checksum verification ----------------------------------------------
 if [ -f "$CHECKSUM" ]; then
   if verify_checksum_file "$OUT" "$(basename "$CHECKSUM")"; then
