@@ -475,9 +475,17 @@ cmd_run() {
     MAX_ELAPSED="$(bash "$BUDGET" limit max_elapsed_seconds_per_run 2>/dev/null || true)"
     if [ -n "$MAX_ELAPSED" ] && [ "$MAX_ELAPSED" -gt 0 ]; then
       (
-        sleep "$MAX_ELAPSED"
+        # This watchdog must never hold the caller's pipe fds past the run
+        # (issue #99): own the sleep and reap it before exiting on TERM, and
+        # detach stdio so even a SIGKILLed pipeline leaves no fd-holding
+        # orphan behind.
+        sleep_pid=""
+        trap 'kill "$sleep_pid" 2>/dev/null; wait "$sleep_pid" 2>/dev/null; exit 0' TERM
+        sleep "$MAX_ELAPSED" &
+        sleep_pid=$!
+        wait "$sleep_pid"
         kill -TERM "$CHILD" 2>/dev/null
-      ) &
+      ) >/dev/null 2>&1 </dev/null &
       WATCHDOG=$!
     fi
   fi
