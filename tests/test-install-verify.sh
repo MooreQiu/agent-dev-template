@@ -104,10 +104,12 @@ commit_and_push() { # commit_and_push <fixture-dir> <message>: the installer
 }
 
 merge_deploy_branch() { # merge_deploy_branch <fixture-dir>: simulate the
-  # deploy PR being merged so the target carries every installed component
-  git -C "$1" checkout -q trunk
-  git -C "$1" merge -q --ff-only chore/agent-dev-template
-  git -C "$1" push -q origin trunk
+  # deploy PR being merged so the target carries every installed component.
+  # Any failure aborts the whole suite: a silently skipped merge would turn
+  # the idempotency and upgrade scenarios into vacuous no-op runs.
+  git -C "$1" checkout -q trunk || exit 1
+  git -C "$1" merge -q --ff-only chore/agent-dev-template || exit 1
+  git -C "$1" push -q origin trunk || exit 1
 }
 
 run_install() { # run_install <bundle-dir> <fixture-dir> <outfile>
@@ -216,11 +218,17 @@ check "verify-project passes in the extracted bundle" \
   sh -c 'cd "$1" && bash scripts/agent-preflight.sh verify-project' sh "$BUNDLE_DIR"
 
 # The gate must stay fail-closed: an unresolved placeholder in the installed
-# configuration blocks the task pipeline.
+# configuration blocks the task pipeline. The pristine file is restored
+# afterwards so later sections exercise an untampered installation.
+cp "$FIX/.agent/project.json" "$TMP/project.json.orig"
 sed 's/"install": "npm install"/"install": "TODO"/' \
   "$FIX/.agent/project.json" > "$FIX/.agent/project.json.bad"
 mv "$FIX/.agent/project.json.bad" "$FIX/.agent/project.json"
 check_fails "verify-project rejects placeholder configuration in the installed repo" \
+  sh -c 'cd "$1" && PATH="$2:$PATH" bash scripts/agent-preflight.sh verify-project' \
+  sh "$FIX" "$MOCK_BIN"
+mv "$TMP/project.json.orig" "$FIX/.agent/project.json"
+check "restored configuration passes verify-project again" \
   sh -c 'cd "$1" && PATH="$2:$PATH" bash scripts/agent-preflight.sh verify-project' \
   sh "$FIX" "$MOCK_BIN"
 
@@ -272,6 +280,9 @@ echo "== AC2: repeated installation is idempotent =="
 # Simulate the deploy PR being merged: re-run the installer against a target
 # that already carries every component -- nothing may change.
 merge_deploy_branch "$FIX"
+check "setup precondition: deploy branch merged into origin/trunk" \
+  sh -c 'test "$(git -C "$1" rev-parse origin/trunk)" = "$(git -C "$1" rev-parse chore/agent-dev-template)"' \
+  sh "$FIX"
 COMMITS_BEFORE="$(git -C "$FIX" rev-list --count origin/trunk)"
 run_install "$BUNDLE_DIR" "$FIX" "$TMP/out-repeat.txt"
 repeat_rc=$?
