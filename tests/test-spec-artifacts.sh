@@ -622,10 +622,10 @@ echo "== wiring: workflows persist and restore via the contract =="
 WFS="$REPO_ROOT/.github/workflows/spec-start.yml"
 WFC="$REPO_ROOT/.github/workflows/spec-converge.yml"
 
-check "spec-start workflow grants artifact read access" \
-  sh -c 'grep -q "actions: read" "$1"' sh "$WFS"
-check "spec-converge workflow grants artifact read access" \
-  sh -c 'grep -q "actions: read" "$1"' sh "$WFC"
+check "spec-start workflow grants artifact read and dispatch write access" \
+  sh -c 'grep -q "actions: write" "$1"' sh "$WFS"
+check "spec-converge workflow grants artifact read and dispatch write access" \
+  sh -c 'grep -q "actions: write" "$1"' sh "$WFC"
 
 if [ -f "$WFS" ]; then
   check "spec-start restores planning artifacts before validating" \

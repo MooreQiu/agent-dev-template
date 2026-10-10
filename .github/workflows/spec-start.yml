@@ -18,7 +18,9 @@ on:
 permissions:
   issues: write
   contents: read
-  actions: read # restore planning artifacts from a previous run
+  # read: restore planning artifacts from a previous run (#44)
+  # write: advance the pipeline via an authenticated workflow_dispatch (#47)
+  actions: write
 
 concurrency:
   group: spec-start-${{ github.event.inputs.spec }}
@@ -113,6 +115,13 @@ jobs:
 
       - name: Generate issues from the approved tasks
         run: bash scripts/spec-start.sh "$SPEC" "$REVISION" --json
+
+      # Issue #47 event handoff: ready-for-agent labels created with
+      # GITHUB_TOKEN do not trigger workflows, so the pipeline advances via
+      # an authenticated workflow_dispatch of the scheduler instead of
+      # relying on model prompts or label events.
+      - name: Advance to scheduling
+        run: bash scripts/spec-advance.sh after-start "$SPEC" "$REVISION"
 
       # Bind the payload to feature identity + approved revision before the
       # upload so a fresh runner can validate what it retrieves.

@@ -11,6 +11,7 @@ permissions:
   issues: write
   contents: write
   pull-requests: write
+  actions: write # 队列排空后经认证 dispatch 触发收敛（issue #47）
 
 # 串行基线（issue #17）：一次事件只调度一个任务，运行间排队。跨分发路径的
 # 互斥仍由统一认领协议保证（refs/agent-claims/* CAS 原子认领 + 租约）；
@@ -169,7 +170,12 @@ jobs:
           # 完整队列 + p0 阻塞语义 + 依赖已合并才可选（一次选一个）
           N="$(scripts/agent-schedule.sh next)"
           if [ -z "$N" ]; then
-            echo "no eligible task after ${{ github.event_name }} event; periodic sweep remains the recovery path"
+            echo "no eligible task after ${{ github.event_name }} event; probing drained features for convergence (issue #47)"
+            # 队列排空 ≠ 流水线结束：对已批准且排空的 feature，经认证的
+            # workflow_dispatch 触发 spec-converge（幂等 run key 去重；
+            # 暂停/取消/项目预算在转换点内生效，见 docs/SPEC_ADVANCE.md）。
+            # 修复 issue 重入队列后由后续 merge/label 事件继续推进。
+            bash scripts/spec-advance.sh on-drained
             exit 0
           fi
           echo "=== 调度 issue #$N（事件: ${{ github.event_name }}）==="

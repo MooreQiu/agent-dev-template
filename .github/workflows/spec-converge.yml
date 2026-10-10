@@ -7,6 +7,11 @@ name: Spec Converge
 # acceptance scenarios; the entrypoint then turns findings into deduplicated
 # remediation issues or publishes completion. Approved spec, plan, and tasks
 # are never modified (docs/SPEC_CONVERGE.md).
+#
+# Idempotent stage/run key (issue #47): the run title binds the feature and
+# approved revision so spec-advance.sh can deduplicate convergence dispatches
+# from repeated or reordered drained-queue events.
+run-name: spec-converge ${{ github.event.inputs.spec }} @ ${{ github.event.inputs.revision }}
 
 on:
   workflow_dispatch:
@@ -25,7 +30,9 @@ on:
 permissions:
   issues: write
   contents: read
-  actions: read # restore convergence artifacts from a previous run
+  # read: restore convergence artifacts from a previous run (#44)
+  # write: advance the pipeline via an authenticated workflow_dispatch (#47)
+  actions: write
 
 concurrency:
   group: spec-converge-${{ github.event.inputs.spec }}
@@ -178,3 +185,15 @@ jobs:
             ${{ env.FEATURE_DIR }}/convergence/evidence
             ${{ env.FEATURE_DIR }}/convergence/complete.json
           if-no-files-found: warn
+
+      # Issue #47: remediation issues created above carry ready-for-agent, but
+      # GITHUB_TOKEN label events do not trigger workflows -- return them to
+      # the same scheduler via an authenticated dispatch. A blocked outcome is
+      # a documented resumable waiting-on-human state; completion is terminal.
+      # Same gating as the persistence steps: only a validated verify status
+      # may advance the pipeline.
+      - name: Advance after convergence
+        if: always() && steps.precheck.outputs.outcome == 'ready' && (steps.verify.outputs.status == 'ok' || steps.verify.outputs.status == 'blocked')
+        run: |
+          bash scripts/spec-advance.sh after-converge "$SPEC" "$REVISION" \
+            --verify-status "${{ steps.verify.outputs.status }}"
