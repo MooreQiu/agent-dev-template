@@ -307,7 +307,7 @@ if [ -f "$SA" ]; then
 
   # --- convergence kind binds the validated target commit ------------------
   mkdir -p "$A/$FD/convergence/evidence"
-  printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "ok", "evidence": "tests pass"}\n' \
+  printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "ok", "evidence": "specs/016-demo/convergence/evidence/gate.json"}\n' \
     > "$A/$FD/convergence/findings.jsonl"
   printf '{"checks": [{"name": "test", "exit": 0}]}\n' \
     > "$A/$FD/convergence/evidence/gate.json"
@@ -568,6 +568,28 @@ if [ -f "$SA" ]; then
   run_sa "$PFRESH" restore convergence "$SPEC_REL" "$R1" --target "$TARGET"
   check "a verified finding citing an unknown requirement is not restored" \
     sh -c '[ "$1" = 5 ] && grep -qi "requirement" "$2"' sh "$STATUS" "$OUT_ERR"
+
+  # flavor 3: a verified line without an evidence location (issue #45: the
+  # evidence record must point somewhere real, never just assert success)
+  {
+    printf '{"id": "G001", "requirement": "REQ1", "kind": "missing", "summary": "gap", "evidence": "tests/demo.txt"}\n'
+    printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "ok", "evidence": ""}\n'
+  } > "$PF"
+  poison_bundle 83 "$PF"
+  run_sa "$PFRESH" restore convergence "$SPEC_REL" "$R1" --target "$TARGET"
+  check "a verified finding without an evidence location is not restored" \
+    sh -c '[ "$1" = 5 ] && grep -qi "no evidence location" "$2"' sh "$STATUS" "$OUT_ERR"
+
+  # flavor 4: verified evidence that exists neither in the checkout nor in
+  # the bundle payload
+  {
+    printf '{"id": "G001", "requirement": "REQ1", "kind": "missing", "summary": "gap", "evidence": "tests/demo.txt"}\n'
+    printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "ok", "evidence": "specs/016-demo/verification/missing.log"}\n'
+  } > "$PF"
+  poison_bundle 84 "$PF"
+  run_sa "$PFRESH" restore convergence "$SPEC_REL" "$R1" --target "$TARGET"
+  check "verified evidence that exists nowhere is not restored" \
+    sh -c '[ "$1" = 5 ] && grep -qi "does not exist" "$2"' sh "$STATUS" "$OUT_ERR"
 
   # The stored poison must not survive as "the" convergence state: the
   # workflow maps this rejection to the same path as stale -- evaluation.

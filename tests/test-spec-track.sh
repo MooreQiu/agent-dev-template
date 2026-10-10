@@ -150,7 +150,24 @@ restore_fixture() {
   printf 'closed\n' > "$MS_STATE"
 }
 
-valid_complete_record() { # requirement -> evidence map covering every REQ
+VALID_TARGET=""
+make_evidence() { # durable verification logs the evidence records can cite
+  mkdir -p "$FX/verification"
+  printf 'end-to-end run log\n' > "$FX/verification/REQ1-e2e.log"
+  printf 'signed export log\n' > "$FX/verification/REQ2-signature.log"
+  printf 'audit trail log\n' > "$FX/verification/REQ3-audit.log"
+  VALID_TARGET=$(git -C "$FX" rev-parse HEAD)
+}
+
+valid_req2() { # the fully valid REQ2 evidence record line
+  printf '{"id": "REQ2", "status": "verified", "method": "Signed export asserted", "evidence": "verification/REQ2-signature.log", "revision": "%s", "commit": "%s"}' \
+    "$R1" "$VALID_TARGET"
+}
+
+record_with_req2() { # record_with_req2 <REQ2-json-line>
+  # A complete record whose REQ1/REQ3 entries are fully evidenced; the REQ2
+  # entry comes from the caller so each scenario can mutilate one field.
+  make_evidence
   mkdir -p "$FX/specs/$FEATURE/convergence"
   cat > "$FX/specs/$FEATURE/convergence/complete.json" <<EOREC
 {
@@ -161,12 +178,27 @@ valid_complete_record() { # requirement -> evidence map covering every REQ
   "acceptance": "pass",
   "evidence": "specs/$FEATURE/convergence/evidence/gate.json",
   "requirements": [
-    {"id": "REQ1", "status": "verified", "evidence": "tests/e2e flow passes on target branch"},
-    {"id": "REQ2", "status": "verified", "evidence": "tests/export signed artifact asserted"},
-    {"id": "REQ3", "status": "integrated-acceptance", "evidence": "specs/$FEATURE/convergence/evidence/gate.json"}
+    {"id": "REQ1", "status": "verified", "method": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log", "revision": "$R1", "commit": "$VALID_TARGET"},
+    $1,
+    {"id": "REQ3", "status": "verified", "method": "Audit trail checked", "evidence": "verification/REQ3-audit.log", "revision": "$R1", "commit": "$VALID_TARGET"}
   ]
 }
 EOREC
+}
+
+valid_complete_record() { # every requirement carries a full evidence record
+  make_evidence
+  record_with_req2 "$(valid_req2)"
+}
+
+stray_commit() { # a commit that exists but is not in the current history
+  BRANCH=$(git -C "$FX" rev-parse --abbrev-ref HEAD)
+  git -C "$FX" checkout -q --detach
+  printf 'stray\n' > "$FX/.stray"
+  git -C "$FX" add .stray
+  git -C "$FX" -c user.name=Test -c user.email=test@example.com commit -qm "stray"
+  STRAY=$(git -C "$FX" rev-parse HEAD)
+  git -C "$FX" checkout -q "$BRANCH"
 }
 
 # ============================================================================
@@ -356,12 +388,72 @@ check "record with failing acceptance is not completion" \
 restore_fixture
 
 valid_complete_record
-sed 's/"evidence": "tests\/export signed artifact asserted"/"evidence": ""/' \
+sed 's/"evidence": "verification\/REQ2-signature.log"/"evidence": ""/' \
   "$FX/specs/$FEATURE/convergence/complete.json" \
   > "$TMP/empty.json" && mv "$TMP/empty.json" "$FX/specs/$FEATURE/convergence/complete.json"
 run_tr "specs/$FEATURE/spec.md" --json
 check "requirement without evidence is not completion" \
   sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "\"requirements_evidenced\":2" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+# ============================================================================
+echo "== issue #45: evidence records must be verifiable, not just non-empty =="
+
+make_evidence
+
+record_with_req2 "$(valid_req2 | sed 's/"status": "verified"/"status": "integrated-acceptance"/; s#"verification/REQ2-signature.log"#"specs/016-demo/convergence/evidence/gate.json"#')"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "a generic integration record cannot evidence a requirement" \
+  sh -c '[ "$1" = 0 ] && grep -Fq "\"status\":\"converging\"" "$2"' sh "$STATUS" "$OUT_FILE"
+check "the generic record is named so convergence can rerun" \
+  sh -c 'grep -Fq "REQ2" "$1" && grep -Fq "not a verified record" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+record_with_req2 "$(valid_req2 | sed 's#"verification/REQ2-signature.log"#"verification/nonexistent.log"#')"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "evidence at a nonexistent location is not completion" \
+  sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "evidence location does not exist" "$1"' sh "$OUT_FILE"
+check "the nonexistent evidence keeps the loop autonomous" \
+  sh -c 'grep -Fq "\"autonomous\":true" "$1" && grep -Fq "\"next\":\"converge\"" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+record_with_req2 "$(valid_req2 | sed "s/\"revision\": \"$R1\"/\"revision\": \"0000000000000000000000000000000000000000\"/")"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "evidence bound to a mismatched spec revision is not completion" \
+  sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "different spec revision" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+stray_commit
+record_with_req2 "$(valid_req2 | sed "s/\"commit\": \"$VALID_TARGET\"/\"commit\": \"$STRAY\"/")"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "evidence collected on a stale commit is not completion" \
+  sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "not in the current history" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+record_with_req2 "$(valid_req2 | sed 's/"commit": "[0-9a-f]*"/"commit": "1111111111111111111111111111111111111111"/')"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "evidence citing a nonexistent commit is not completion" \
+  sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "no valid code commit" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+record_with_req2 "$(valid_req2 | sed 's/"method": "Signed export asserted"/"method": ""/')"
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "a record without a verification method is not completion" \
+  sh -c 'grep -Fq "\"status\":\"converging\"" "$1" && grep -Fq "no verification method" "$1"' sh "$OUT_FILE"
+restore_fixture
+
+valid_complete_record
+drained_remote
+run_tr "specs/$FEATURE/spec.md" --json
+check "a fully evidenced record with valid bindings proves completion" \
+  sh -c '[ "$1" = 0 ] && grep -Fq "\"status\":\"complete\"" "$2" && grep -Fq "\"requirements_evidenced\":3" "$2"' \
+  sh "$STATUS" "$OUT_FILE"
 restore_fixture
 
 valid_complete_record

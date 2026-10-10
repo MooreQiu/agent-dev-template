@@ -264,20 +264,60 @@ if [ "$c_acceptance" != "pass" ]; then
   warn "completion record acceptance is not pass"
   INVALID=1
 fi
+# Issue #45: every approved requirement needs a verified evidence record
+# naming the verification method/result, an existing evidence location, the
+# approved spec revision, and the validated code commit. Generic integration
+# evidence, missing/stale commits, or mismatched revisions reject the record
+# and return the feature to convergence.
 while IFS= read -r req; do
   [ -n "$req" ] || continue
   entry="$(sed -n "/\"id\": \"$req\"/p" "$COMPLETE" | sed -n 1p)"
   if [ -z "$entry" ]; then
-    warn "requirement $req has no evidence in the completion record"
+    warn "requirement $req has no evidence record in the completion record"
     INVALID=1
     continue
   fi
-  evidence="$(printf '%s\n' "$entry" | sed -n 's/.*"evidence": "\([^"]*\)".*/\1/p')"
-  if [ -z "$evidence" ]; then
-    warn "requirement $req has empty evidence"
-    INVALID=1
-  else
+  r_status="$(printf '%s\n' "$entry" | sed -n 's/.*"status": "\([^"]*\)".*/\1/p')"
+  r_method="$(printf '%s\n' "$entry" | sed -n 's/.*"method": "\([^"]*\)".*/\1/p')"
+  r_evidence="$(printf '%s\n' "$entry" | sed -n 's/.*"evidence": "\([^"]*\)".*/\1/p')"
+  r_revision="$(printf '%s\n' "$entry" | sed -n 's/.*"revision": "\([^"]*\)".*/\1/p')"
+  r_commit="$(printf '%s\n' "$entry" | sed -n 's/.*"commit": "\([^"]*\)".*/\1/p')"
+  valid=1
+  if [ "$r_status" != "verified" ]; then
+    warn "requirement $req evidence is not a verified record"
+    valid=0
+  fi
+  if [ -z "$r_method" ]; then
+    warn "requirement $req evidence has no verification method"
+    valid=0
+  fi
+  case "$r_evidence" in
+    ''|/*|../*|*/../*|*/..)
+      warn "requirement $req evidence location is malformed"
+      valid=0
+      ;;
+    *)
+      [ -e "$r_evidence" ] || {
+        warn "requirement $req evidence location does not exist"
+        valid=0
+      } ;;
+  esac
+  if [ "$r_revision" != "$SHA" ]; then
+    warn "requirement $req evidence is bound to a different spec revision than the approval"
+    valid=0
+  fi
+  if [ -z "$r_commit" ] \
+      || ! git rev-parse --verify --quiet "$r_commit^{commit}" >/dev/null 2>&1; then
+    warn "requirement $req evidence has no valid code commit"
+    valid=0
+  elif ! git merge-base --is-ancestor "$r_commit" HEAD >/dev/null 2>&1; then
+    warn "requirement $req evidence commit is not in the current history (stale)"
+    valid=0
+  fi
+  if [ "$valid" -eq 1 ]; then
     REQS_EVIDENCED=$((REQS_EVIDENCED + 1))
+  else
+    INVALID=1
   fi
 done < "$WORK/reqs"
 

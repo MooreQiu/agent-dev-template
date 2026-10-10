@@ -178,6 +178,12 @@ EOAPP
 - [ ] T004 Harden deployment
 - [x] T005 Scaffold already completed
 EOTASK
+  # Durable verification logs that verified findings can cite as evidence
+  # (issue #45: an evidence record must point at an existing file).
+  mkdir -p "$fx/verification"
+  printf 'end-to-end run on the target commit\n' > "$fx/verification/REQ1-e2e.log"
+  printf 'signed export asserted on the target commit\n' > "$fx/verification/REQ2-signature.log"
+  printf 'audit trail checked on the target commit\n' > "$fx/verification/REQ3-audit.log"
   git -C "$fx" add -A
   git -C "$fx" -c user.name=Test -c user.email=test@example.com commit -qm "artifacts"
 }
@@ -237,6 +243,24 @@ immutable_hashes() { # prints blob hashes of the artifacts that must not change
 gap_findings() { # gap_findings <id> <requirement> <kind> <summary>
   cat > "$FX/specs/$FEATURE/findings.jsonl" <<EOF
 {"id": "$1", "requirement": "$2", "kind": "$3", "summary": "$4", "evidence": "converge session $1"}
+EOF
+}
+
+verified_findings() { # verified_findings: REQ1, REQ2 and REQ3 all verified
+  cat > "$FX/specs/$FEATURE/findings.jsonl" <<'EOF'
+{"id": "V-REQ1", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log"}
+{"id": "V-REQ2", "requirement": "REQ2", "kind": "verified", "summary": "Signed export checked", "evidence": "verification/REQ2-signature.log"}
+{"id": "V-REQ3", "requirement": "REQ3", "kind": "verified", "summary": "Audit trail checked", "evidence": "verification/REQ3-audit.log"}
+EOF
+}
+
+focused_findings() { # focused_findings <id> <requirement> <summary>
+  # A missing gap on one requirement plus verified evidence for the rest, so
+  # each scenario exercises exactly the gap under test.
+  cat > "$FX/specs/$FEATURE/findings.jsonl" <<EOF
+{"id": "V-REQ1", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log"}
+{"id": "$1", "requirement": "$2", "kind": "missing", "summary": "$3", "evidence": "converge session $1"}
+{"id": "V-REQ3", "requirement": "REQ3", "kind": "verified", "summary": "Audit trail checked", "evidence": "verification/REQ3-audit.log"}
 EOF
 }
 
@@ -356,7 +380,7 @@ check "usage error fails closed as outcome=failed exit 2" \
 echo "== AC2 + AC3: missing requirement despite closed issues becomes a task =="
 
 reset_scenario
-gap_findings G001 REQ2 missing "Signed export artifact is not implemented"
+focused_findings G001 REQ2 "Signed export artifact is not implemented"
 BEFORE=$(immutable_hashes)
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
 AFTER=$(immutable_hashes)
@@ -389,8 +413,9 @@ restore_fixture
 echo "== AC2: integration regressions synthesize a gap with evidence =="
 
 reset_scenario
+verified_findings
 printf '1\n' > "$GATE_RC"
-run_sc "specs/$FEATURE/spec.md" "$R1" --json
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
 check "failing integrated acceptance schedules remediation (exit 0)" \
   sh -c '[ "$1" = 0 ]' sh "$STATUS"
 check "json records the failed acceptance" \
@@ -408,7 +433,7 @@ restore_fixture
 echo "== AC3: remediation reruns are deduplicated =="
 
 reset_scenario
-gap_findings G001 REQ2 missing "Signed export artifact is not implemented"
+focused_findings G001 REQ2 "Signed export artifact is not implemented"
 printf '21\t[%s/G001] Signed export artifact is not implemented (attempt 1)\tCLOSED\n' "$FEATURE" >> "$ISSUES_TSV"
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --budget 2 --json
 check "recurring gap after a closed attempt opens the next attempt" \
@@ -431,7 +456,7 @@ restore_fixture
 echo "== AC4: finite budget reports non-converging work as blocked =="
 
 reset_scenario
-gap_findings G001 REQ2 missing "Signed export artifact is not implemented"
+focused_findings G001 REQ2 "Signed export artifact is not implemented"
 printf '21\t[%s/G001] Signed export artifact is not implemented (attempt 1)\tCLOSED\n' "$FEATURE" >> "$ISSUES_TSV"
 printf '22\t[%s/G001] Signed export artifact is not implemented (attempt 2)\tCLOSED\n' "$FEATURE" >> "$ISSUES_TSV"
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --budget 2 --json
@@ -464,31 +489,74 @@ check "out-of-scope body asks for a human scope decision" \
 restore_fixture
 
 # ============================================================================
-echo "== AC5: true completion publishes status with traceability =="
+echo "== AC2+AC5: green integration cannot fill unevidenced requirements =="
 
 reset_scenario
 cat > "$FX/specs/$FEATURE/findings.jsonl" <<'EOF'
-{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "tests/e2e flow passes on target branch"}
-{"id": "V002", "requirement": "REQ2", "kind": "verified", "summary": "Signed export checked", "evidence": "tests/export signed artifact asserted"}
+{"id": "V-REQ1", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log"}
+{"id": "V-REQ2", "requirement": "REQ2", "kind": "verified", "summary": "Signed export checked", "evidence": "verification/REQ2-signature.log"}
 EOF
 BEFORE=$(immutable_hashes)
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
-check "no gaps and passing acceptance complete the project" \
+AFTER=$(immutable_hashes)
+check "green acceptance with an unevidenced requirement is not completion" \
+  sh -c '[ "$1" = 0 ] && grep -Fq "\"status\":\"remediation-scheduled\"" "$2"' sh "$STATUS" "$OUT_FILE"
+check "only the unevidenced requirement is returned to convergence" \
+  sh -c 'grep -Fq "\"created\":[\"016-demo/evidence-REQ3\"]" "$1"' sh "$OUT_FILE"
+check "a verification gap is scheduled for the unevidenced requirement" \
+  sh -c '[ "$(cat "$1")" = 1 ] && grep -Fq "[016-demo/evidence-REQ3]" "$2"' \
+  sh "$COUNTER" "$CREATED/1.title"
+check "the verification gap re-enters the scheduling queue" \
+  sh -c 'grep -q "ready-for-agent" "$1" && ! grep -q "blocked" "$1"' sh "$CREATED/1.labels"
+check "the verification gap names the requirement and the evidence policy" \
+  sh -c 'grep -Fq "Requirement: REQ3" "$1" && grep -qi "verified evidence" "$1"' sh "$CREATED/1.body"
+check "no completion record while a requirement lacks verified evidence" \
+  test ! -f "$FX/specs/$FEATURE/convergence/complete.json"
+check "approved spec, plan, tasks and approval record are preserved" \
+  sh -c '[ "$1" = "$2" ]' sh "$BEFORE" "$AFTER"
+restore_fixture
+
+reset_scenario
+cat > "$FX/specs/$FEATURE/findings.jsonl" <<'EOF'
+{"id": "V-REQ1", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log"}
+{"id": "V-REQ2", "requirement": "REQ2", "kind": "verified", "summary": "Signed export checked", "evidence": "verification/REQ2-signature.log"}
+EOF
+printf '21\t[%s/evidence-REQ3] No verified evidence for requirement REQ3; a green integration run alone does not establish it (attempt 1)\tCLOSED\n' "$FEATURE" >> "$ISSUES_TSV"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
+check "recurring unevidenced requirement opens the next remediation attempt" \
+  sh -c '[ "$(cat "$1")" = 1 ] && grep -Fq "(attempt 2)" "$2"' \
+  sh "$COUNTER" "$CREATED/1.title"
+restore_fixture
+
+# ============================================================================
+echo "== AC5: fully evidenced completion publishes traceable records =="
+
+reset_scenario
+verified_findings
+BEFORE=$(immutable_hashes)
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
+check "every requirement evidenced plus green acceptance completes the project" \
   sh -c '[ "$1" = 0 ] && grep -Fq "\"status\":\"complete\"" "$2"' sh "$STATUS" "$OUT_FILE"
 COMPLETE="$FX/specs/$FEATURE/convergence/complete.json"
-check "completion record maps every requirement to evidence" \
-  sh -c 'grep -Fq "\"id\": \"REQ1\"" "$1" && grep -Fq "\"id\": \"REQ3\"" "$1"' sh "$COMPLETE"
-check "verified requirements cite the converge evidence" \
-  sh -c 'grep -Fq "\"status\": \"verified\"" "$1" && grep -Fq "tests/export signed artifact asserted" "$1"' sh "$COMPLETE"
-check "unverifiable requirements fall back to acceptance evidence" \
-  sh -c 'grep -Fq "\"status\": \"integrated-acceptance\"" "$1" && grep -Fq "convergence/evidence/gate.json" "$1"' sh "$COMPLETE"
+TARGET=$(git -C "$FX" rev-parse HEAD)
+check "completion record maps every requirement to an evidence record" \
+  sh -c 'grep -Fq "\"id\": \"REQ1\"" "$1" && grep -Fq "\"id\": \"REQ2\"" "$1" && grep -Fq "\"id\": \"REQ3\"" "$1"' sh "$COMPLETE"
+check "each record names a verified status, method and evidence location" \
+  sh -c 'grep -Fq "\"status\": \"verified\", \"method\": \"Signed export checked\", \"evidence\": \"verification/REQ2-signature.log\"" "$1"' sh "$COMPLETE"
+check "each record binds the approved spec revision and the validated code commit" \
+  sh -c '[ "$(grep -c "\"revision\": \"$2\", \"commit\": \"$3\"" "$1")" = 3 ]' \
+  sh "$COMPLETE" "$R1" "$TARGET"
+check "completion retains the separate whole-project integration acceptance" \
+  sh -c 'grep -Fq "\"acceptance\": \"pass\"" "$1" && grep -Fq "\"evidence\": \"specs/016-demo/convergence/evidence/gate.json\"" "$1"' sh "$COMPLETE"
+check "no requirement falls back to generic acceptance evidence" \
+  sh -c '! grep -q "integrated-acceptance" "$1"' sh "$COMPLETE"
 check "completion closes the feature milestone" \
   sh -c 'grep -q -- "-X PATCH" "$1" && grep -Fq "milestones/3" "$1"' sh "$GH_LOG"
 check "completion runs the integrated acceptance" test -s "$GATE_LOG"
 check "approved spec, plan, tasks and approval record stay immutable" \
   sh -c '[ "$1" = "$2" ]' sh "$BEFORE" "$(immutable_hashes)"
 
-run_sc "specs/$FEATURE/spec.md" "$R1"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
 check "human output announces PROJECT-COMPLETE" \
   sh -c 'grep -q "PROJECT-COMPLETE" "$1"' sh "$OUT_FILE"
 restore_fixture
@@ -496,7 +564,7 @@ restore_fixture
 reset_scenario
 printf '1\n' > "$GATE_RC"
 cat > "$FX/specs/$FEATURE/findings.jsonl" <<'EOF'
-{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "tests/e2e flow passes on target branch"}
+{"id": "V-REQ1", "requirement": "REQ1", "kind": "verified", "summary": "End-to-end flow checked", "evidence": "verification/REQ1-e2e.log"}
 EOF
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl" --json
 check "verified findings cannot outweigh a failing acceptance" \
@@ -532,6 +600,38 @@ printf '{"id": "V001", "requirement": "REQ999", "kind": "verified", "summary": "
 run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
 check "verified entry for an unknown requirement is rejected" \
   sh -c '[ "$1" != 0 ]' sh "$STATUS"
+restore_fixture
+
+reset_scenario
+printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "checked", "evidence": "verification/does-not-exist.log"}\n' \
+  > "$FX/specs/$FEATURE/findings.jsonl"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
+check "verified evidence pointing at a nonexistent file fails closed" \
+  sh -c '[ "$1" != 0 ] && grep -q "does not exist" "$2"' sh "$STATUS" "$OUT_ERR"
+restore_fixture
+
+reset_scenario
+printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "checked", "evidence": ""}\n' \
+  > "$FX/specs/$FEATURE/findings.jsonl"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
+check "verified finding without an evidence location is rejected" \
+  sh -c '[ "$1" != 0 ] && grep -q "no evidence location" "$2"' sh "$STATUS" "$OUT_ERR"
+restore_fixture
+
+reset_scenario
+printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "", "evidence": "verification/REQ1-e2e.log"}\n' \
+  > "$FX/specs/$FEATURE/findings.jsonl"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
+check "verified finding without a verification method is rejected" \
+  sh -c '[ "$1" != 0 ] && grep -q "verification method" "$2"' sh "$STATUS" "$OUT_ERR"
+restore_fixture
+
+reset_scenario
+printf '{"id": "V001", "requirement": "REQ1", "kind": "verified", "summary": "checked", "evidence": "/etc/passwd"}\n' \
+  > "$FX/specs/$FEATURE/findings.jsonl"
+run_sc "specs/$FEATURE/spec.md" "$R1" --findings "specs/$FEATURE/findings.jsonl"
+check "absolute evidence paths are rejected as malformed" \
+  sh -c '[ "$1" != 0 ] && grep -q "repository-relative" "$2"' sh "$STATUS" "$OUT_ERR"
 restore_fixture
 
 reset_scenario
@@ -572,6 +672,8 @@ if [ -f "$WF" ]; then
     sh -c 'grep -q "speckit-converge" "$1" && grep -q "scripts/agent.sh" "$1"' sh "$WF"
   check "workflow verifies completion via the entrypoint" \
     sh -c 'grep -q "scripts/spec-converge.sh" "$1" && grep -q -- "--findings" "$1"' sh "$WF"
+  check "converge prompt demands evidence at an existing file per requirement" \
+    sh -c 'grep -q "repository-relative path to an existing file" "$1" && grep -q "not evidence for a requirement" "$1"' sh "$WF"
   check "workflow fetches full history so the revision resolves" \
     sh -c 'grep -q "fetch-depth: 0" "$1"' sh "$WF"
   check "workflow uploads findings and evidence artifacts" \

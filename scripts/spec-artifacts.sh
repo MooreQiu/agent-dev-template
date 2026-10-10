@@ -218,14 +218,16 @@ cmd_manifest() { # cmd_manifest <kind> <spec> <revision> [options] <file>...
 # --- findings schema gate (mirrors parse_findings in scripts/spec-converge.sh)
 # Valid bindings and hashes cannot tell whether a findings.jsonl is something
 # the converge entrypoint would accept: a line that is not a JSON object, an
-# unknown kind, or a verified line citing a requirement the approved spec
-# lacks makes the entrypoint die while the bundle itself stays "valid".
-# Restoring such a bundle made every later run skip the agent evaluation and
-# re-fail on verify forever, so restore rejects it outright and the workflow
-# re-evaluates (issue #44 recovery contract, docs/SPEC_ARTIFACTS.md).
+# unknown kind, a verified line citing a requirement the approved spec
+# lacks, or a verified line without a verification method and existing
+# evidence (issue #45) makes the entrypoint die while the bundle itself
+# stays "valid". Restoring such a bundle made every later run skip the agent
+# evaluation and re-fail on verify forever, so restore rejects it outright
+# and the workflow re-evaluates (issue #44 recovery contract,
+# docs/SPEC_ARTIFACTS.md).
 FINDINGS_ERR=""
-validate_findings() { # validate_findings <file> <requirement-tokens-file>
-  f=$1; reqs=$2
+validate_findings() { # validate_findings <file> <requirement-tokens-file> [bundle-payload-root]
+  f=$1; reqs=$2; payload_root="${3:-}"
   n=0
   gap_ids=" "
   while IFS= read -r line; do
@@ -245,6 +247,27 @@ validate_findings() { # validate_findings <file> <requirement-tokens-file>
         || { FINDINGS_ERR="verified findings line $n has no requirement"; return 1; }
       grep -Fxq "$freq" "$reqs" \
         || { FINDINGS_ERR="verified findings line $n cites requirement $freq, which is not in the approved spec"; return 1; }
+      # Issue #45: mirror the verified-record contract of the entrypoint.
+      fsum="$(printf '%s\n' "$line" | sed -n 's/.*"summary": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+      [ -n "$fsum" ] \
+        || { FINDINGS_ERR="verified findings line $n has no verification method/result"; return 1; }
+      fev="$(printf '%s\n' "$line" | sed -n 's/.*"evidence": "\([^"]*\)".*/\1/p' | sed -n 1p)"
+      [ -n "$fev" ] \
+        || { FINDINGS_ERR="verified findings line $n has no evidence location"; return 1; }
+      case "$fev" in
+        /*|../*|*/../*|*/..)
+          FINDINGS_ERR="verified findings line $n evidence must be a repository-relative path: $fev"; return 1 ;;
+      esac
+      if [ ! -e "$fev" ]; then
+        in_bundle=""
+        if [ -n "$payload_root" ]; then
+          case "$fev" in
+            "$ROOT"/*) [ -e "$payload_root/${fev#"$ROOT"/}" ] && in_bundle=1 ;;
+          esac
+        fi
+        [ -n "$in_bundle" ] \
+          || { FINDINGS_ERR="verified findings line $n cites evidence $fev, which does not exist in the checkout or the bundle"; return 1; }
+      fi
       continue
     fi
     fid="$(printf '%s\n' "$line" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p' | sed -n 1p)"
@@ -402,7 +425,7 @@ LISTINGS
   # never be restored as success -- the next run has to re-evaluate.
   if [ "$kind" = convergence ] && [ -f "$WORK/payload/findings.jsonl" ]; then
     grep -oE '(FR|SC)-[0-9]+|REQ[0-9]+' "$SPEC" | sort -u > "$WORK/reqs" || true
-    if ! validate_findings "$WORK/payload/findings.jsonl" "$WORK/reqs"; then
+    if ! validate_findings "$WORK/payload/findings.jsonl" "$WORK/reqs" "$WORK/payload"; then
       die 5 "artifact $artifact_id carries findings.jsonl that fails the findings schema: $FINDINGS_ERR; the bundle is unusable -- evaluate fresh (docs/SPEC_ARTIFACTS.md)"
     fi
   fi
