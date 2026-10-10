@@ -364,11 +364,11 @@ check "the reviewer step is addressable for step outputs" \
 echo "== issue #94: the zero-exit branch engages the same recovery first"
 
 check "the zero-exit branch probes the session output with the single verdict parser" \
-  sh -c 'grep -Fq "review-verdict.sh parse \"$N\" --reviewer-output \"$RUNNER_TEMP/reviewer-output.md\"" "$1"' sh "$WF"
+  sh -c 'grep -Fq "review-verdict.sh parse \"\$N\" --reviewer-output \"\$RUNNER_TEMP/reviewer-output.md\"" "$1"' sh "$WF"
 check "the zero-exit branch attempts comment recovery when the parser rejects the output" \
-  sh -c '[ "$(grep -cF "scripts/review-verdict-recover.sh \"$N\"" "$1")" -ge 2 ]' sh "$WF"
+  sh -c '[ "$(grep -cF "scripts/review-verdict-recover.sh \"\$N\"" "$1")" -ge 2 ]' sh "$WF"
 check "both recovery branches feed the recovered report to the recorder" \
-  sh -c '[ "$(grep -cF "echo \"recovered=true\" >> \"$GITHUB_OUTPUT\"" "$1")" -ge 2 ]' sh "$WF"
+  sh -c '[ "$(grep -cF "echo \"recovered=true\" >> \"\$GITHUB_OUTPUT\"" "$1")" -ge 2 ]' sh "$WF"
 check "the zero-exit recovery announces the honored verdict on the PR" \
   sh -c 'grep -Fq "其输出缺少可解析的 VERDICT 行" "$1"' sh "$WF"
 check "an unrecoverable zero-exit window fails closed with a precise alert" \
