@@ -207,7 +207,7 @@ jobs:
               --since "$REVIEW_START" --out "$RECOVERED_REPORT")"; then
             echo "recovered=true" >> "$GITHUB_OUTPUT"
             echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
-            gh pr comment "$N" --body "⚠️ 审计会话正常退出但其输出缺少可解析的 VERDICT 行；本窗口内已发布格式合法的 verdict 报告（$VERDICT）：按已发布 verdict 继续走 verdict 执行链（issue #94，沿用 #73 的同一恢复规则）。" || true
+            gh pr comment "$N" --body "⚠️ 审计会话正常退出但其输出缺少可解析的 VERDICT 行；本窗口内已发布格式合法的 verdict 报告（${VERDICT}）：按已发布 verdict 继续走 verdict 执行链（issue #94，沿用 #73 的同一恢复规则）。" || true
             exit 0
           fi
           gh pr comment "$N" --body "⚠️ 审计会话正常退出，但其输出与时间窗内的评论都没有可解析的 VERDICT 行：为安全起见按 fail-closed 处理，本次审计作废，不自动合并；请 rerun 重试（issue #94）。"
