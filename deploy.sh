@@ -56,10 +56,14 @@ say() { printf '\n==> %s\n' "$*"; }
 
 # 模板必要组件清单：自动化（workflows）/指令（AGENTS、CLAUDE、docs）
 # /技能（.claude/skills）/启动器（.claude/commands、scripts）/安装（INSTALL、setup）
+# /运行配置（.agent 与 npm 元数据：安装出的默认 .agent/project.json 声明了
+# package-lock.json，缺了它们 verify-project 门会 fail-closed；消费者随后按
+# INSTALL.md 把命令换成自己项目的真实值）
 ITEMS=(
   AGENTS.md
   CLAUDE.md
   INSTALL.md
+  .agent
   docs
   scripts
   .specify
@@ -72,6 +76,8 @@ ITEMS=(
   .github/workflows/pr-review.yml
   .github/workflows/review-watchdog.yml
   .github/workflows/project-sync.yml
+  package.json
+  package-lock.json
   setup.sh
 )
 

@@ -22,8 +22,11 @@ docs
 # License
 LICENSE
 
-# Package metadata (version is stamped at build time)
+# Package metadata (version is stamped at build time; the lockfile is the one
+# declared by .agent/project.json, so the shipped default configuration passes
+# the agent-preflight verify-project gate in a clean install)
 package.json
+package-lock.json
 
 # Agent role & preflight configuration
 .agent
