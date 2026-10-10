@@ -71,6 +71,9 @@ ITEMS=(
   .claude/skills
   .github/ISSUE_TEMPLATE
   .github/PULL_REQUEST_TEMPLATE.md
+  # ci.yml 上报 "CI Gate / quality-gate"——setup.sh 分支保护把它注册为
+  # 必需检查，缺了它所有 PR 会永久卡在 "Expected — waiting for status"
+  .github/workflows/ci.yml
   .github/workflows/claude.yml
   .github/workflows/agent-sweep.yml
   .github/workflows/pr-review.yml
