@@ -44,6 +44,29 @@ OUT="$WORK/out"
 make_source_fixture() {
   mkdir -p "$FIX"
   git -C "$REPO_ROOT" archive HEAD | tar -x -C "$FIX"
+  # The repo's package-lock.json is a zero-dependency stub, which would make
+  # any "dependency entries untouched" assertion vacuously true. Give the
+  # fixture a realistic dependency pin (lockfileVersion 3 shape) so the
+  # stamping checks below actually exercise it.
+  cat > "$FIX/package-lock.json" <<'EOF'
+{
+  "name": "agent-dev-template",
+  "version": "0.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "agent-dev-template",
+      "version": "0.0.0"
+    },
+    "node_modules/example-pin": {
+      "version": "2.4.6",
+      "resolved": "https://registry.npmjs.org/example-pin/-/example-pin-2.4.6.tgz",
+      "integrity": "sha512-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000=="
+    }
+  }
+}
+EOF
   git -C "$FIX" init -q
   git -C "$FIX" add -A
   # Tracked sentinels: committed by accident, must still be excluded.
@@ -241,6 +264,16 @@ if [ "$(grep -c '^[<>]' "$WORK/lock.diff")" -eq 4 ] \
 else
   fail "lockfile diff touches exactly the two root version fields" \
     "$(head -4 "$WORK/lock.diff")"
+fi
+# The dependency pin must survive stamping with its resolved/integrity intact.
+# In a lockfileVersion 3 lockfile a dependency's "version" sits at the SAME
+# 6-space indentation as packages[""].version, so this catches any stamping
+# that keys on indentation instead of JSON structure.
+if grep -q '^      "version": "2.4.6",$' "$LOCKFILE" 2>/dev/null \
+     && grep -q 'example-pin-2\.4\.6\.tgz' "$LOCKFILE"; then
+  pass "lockfile dependency pin (example-pin 2.4.6) preserved"
+else
+  fail "lockfile dependency pin (example-pin 2.4.6) preserved"
 fi
 
 # --- AC5: checksum verification ----------------------------------------------
