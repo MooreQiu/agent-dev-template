@@ -146,10 +146,36 @@ $missing"
 )
 
 # --- version stamping -------------------------------------------------------
+# Stamp package.json and the shipped package-lock.json so the pair stays
+# consistent for an offline `npm ci` (issue #83). Exactly two lockfile fields
+# are stamped: top-level "version" and packages[""].version. This needs JSON
+# structure, not text anchors: in a lockfileVersion 3 lockfile a dependency's
+# "version" sits at the SAME 6-space indentation as packages[""].version, so
+# an indentation-anchored substitution also rewrites every dependency pin
+# while resolved/integrity still describe the old release, corrupting the
+# lockfile. node (the project toolchain) round-trips the documents.
+command -v node >/dev/null 2>&1 \
+  || die "node is required for lockfile version stamping"
 if [ -f "$BUNDLE/package.json" ]; then
-  sed "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" \
-    "$BUNDLE/package.json" > "$BUNDLE/package.json.tmp"
-  mv "$BUNDLE/package.json.tmp" "$BUNDLE/package.json"
+  node -e '
+    const fs = require("fs");
+    const [file, version] = process.argv.slice(1);
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    doc.version = version;
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+  ' "$BUNDLE/package.json" "$VERSION"
+fi
+if [ -f "$BUNDLE/package-lock.json" ]; then
+  node -e '
+    const fs = require("fs");
+    const [file, version] = process.argv.slice(1);
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    doc.version = version;
+    if (doc.packages && typeof doc.packages === "object" && doc.packages[""]) {
+      doc.packages[""].version = version;
+    }
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+  ' "$BUNDLE/package-lock.json" "$VERSION"
 fi
 
 # --- manifest -----------------------------------------------------------------

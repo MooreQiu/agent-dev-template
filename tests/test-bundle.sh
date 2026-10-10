@@ -44,6 +44,29 @@ OUT="$WORK/out"
 make_source_fixture() {
   mkdir -p "$FIX"
   git -C "$REPO_ROOT" archive HEAD | tar -x -C "$FIX"
+  # The repo's package-lock.json is a zero-dependency stub, which would make
+  # any "dependency entries untouched" assertion vacuously true. Give the
+  # fixture a realistic dependency pin (lockfileVersion 3 shape) so the
+  # stamping checks below actually exercise it.
+  cat > "$FIX/package-lock.json" <<'EOF'
+{
+  "name": "agent-dev-template",
+  "version": "0.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "agent-dev-template",
+      "version": "0.0.0"
+    },
+    "node_modules/example-pin": {
+      "version": "2.4.6",
+      "resolved": "https://registry.npmjs.org/example-pin/-/example-pin-2.4.6.tgz",
+      "integrity": "sha512-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000=="
+    }
+  }
+}
+EOF
   git -C "$FIX" init -q
   git -C "$FIX" add -A
   # Tracked sentinels: committed by accident, must still be excluded.
@@ -207,6 +230,50 @@ if grep -q "\"version\": \"$VERSION\"" "$BUNDLE_DIR/package.json" 2>/dev/null; t
   pass "package.json inside bundle stamped with $VERSION"
 else
   fail "package.json inside bundle stamped with $VERSION"
+fi
+
+# Lockfile stamping (issue #83): the shipped package-lock.json must agree
+# with the stamped package.json at both root occurrences.
+LOCKFILE="$BUNDLE_DIR/package-lock.json"
+if [ -f "$LOCKFILE" ]; then
+  pass "bundle ships package-lock.json"
+else
+  fail "bundle ships package-lock.json"
+fi
+# Top-level version field (2-space indent in a lockfileVersion 3 lockfile).
+if grep -q "^  \"version\": \"$VERSION\"" "$LOCKFILE" 2>/dev/null; then
+  pass "lockfile top-level version stamped with $VERSION"
+else
+  fail "lockfile top-level version stamped with $VERSION"
+fi
+# Root packages[""] version field (6-space indent).
+if grep -q "^      \"version\": \"$VERSION\"" "$LOCKFILE" 2>/dev/null; then
+  pass "lockfile packages[\"\"] version stamped with $VERSION"
+else
+  fail "lockfile packages[\"\"] version stamped with $VERSION"
+fi
+# Dependency entries are untouched: compared to the source lockfile the only
+# changed lines are the two root version fields (2 removed + 2 added).
+diff "$FIX/package-lock.json" "$LOCKFILE" >"$WORK/lock.diff" 2>&1
+if [ "$(grep -c '^[<>]' "$WORK/lock.diff")" -eq 4 ] \
+     && grep -q '^<   "version": "0.0.0"' "$WORK/lock.diff" \
+     && grep -q '^<       "version": "0.0.0"' "$WORK/lock.diff" \
+     && grep -q '^>   "version": "'"$VERSION"'"' "$WORK/lock.diff" \
+     && grep -q '^>       "version": "'"$VERSION"'"' "$WORK/lock.diff"; then
+  pass "lockfile diff touches exactly the two root version fields"
+else
+  fail "lockfile diff touches exactly the two root version fields" \
+    "$(head -4 "$WORK/lock.diff")"
+fi
+# The dependency pin must survive stamping with its resolved/integrity intact.
+# In a lockfileVersion 3 lockfile a dependency's "version" sits at the SAME
+# 6-space indentation as packages[""].version, so this catches any stamping
+# that keys on indentation instead of JSON structure.
+if grep -q '^      "version": "2.4.6",$' "$LOCKFILE" 2>/dev/null \
+     && grep -q 'example-pin-2\.4\.6\.tgz' "$LOCKFILE"; then
+  pass "lockfile dependency pin (example-pin 2.4.6) preserved"
+else
+  fail "lockfile dependency pin (example-pin 2.4.6) preserved"
 fi
 
 # --- AC5: checksum verification ----------------------------------------------
