@@ -5,7 +5,7 @@ v0.1.0 是本模板的第一个发布，定位为 **trial release**（试用发�
 ## 版本号落点
 
 - 仓库内的 `package.json` / `package-lock.json` 是开发元数据，两者必须**一致**（`tests/test-release.sh` 有断言）；发布版本**不存在仓库文件里**，仓库副本不随发布改动。
-- 发布版本唯一的落点是构建输入：`scripts/build-bundle.sh --version X.Y.Z` 在构建时把版本盖进**包内副本**的 `package.json`。包内 `package-lock.json` 的版本戳目前**尚未实现**（跟进 issue #86；该缺口合入前，离线 `npm ci` 消费者需先在包内执行 `npm install --package-lock-only` 对齐 lockfile，或以 `npm install` 代替）。
+- 发布版本唯一的落点是构建输入：`scripts/build-bundle.sh --version X.Y.Z` 在构建时把版本盖进**包内副本**的 `package.json` 与 `package-lock.json`（两处根 version 字段，依赖 pin 不动），保证离线 `npm ci` 时这对文件保持一致。
 - `.agent/project.json` 的 `runtime.version` 是 **Node 运行时 pin**（当前 22），与发布版本无关，不要混用。
 - 发布身份 = 版本号 + 不可变 revision（完整 commit SHA，`--revision` 只接受完整 SHA，拒绝 `main`、tag 等可变 ref）。tag 只在真正发布时创建（见下文），准备阶段不打 tag。
 - 版本语义（0.x 阶段）：MINOR 是能力批次，PATCH 是修复；0.x 内不承诺跨 minor 兼容。升级语义是"补新增不覆盖"：重跑 `deploy.sh`，已存在文件一律跳过，定制文件手动 diff 合并，见 [UPGRADE.md](UPGRADE.md)。

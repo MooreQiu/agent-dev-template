@@ -9,7 +9,7 @@ scripts/build-bundle.sh --version 0.1.0 [--revision <完整commit SHA>] \
   [--source <仓库目录>] [--output <目录>] [--notes <发布说明文件>]
 ```
 
-- `--version` 必填（`X.Y.Z`，容许前缀 `v`）；构建时会把版本号盖进包内 `package.json` 的 `version` 字段（只改包内副本，不动仓库文件）。
+- `--version` 必填（`X.Y.Z`，容许前缀 `v`）；构建时会把版本号盖进包内 `package.json` 的 `version` 字段，并同步盖进包内 `package-lock.json` 的两处根 `version` 字段（依赖 pin 不受影响；只改包内副本，不动仓库文件）。
 - `--revision` 是**不可变源版本**：只接受完整 commit SHA（40/64 位十六进制），拒绝 `main`、tag 等可变 ref；缺省取 `--source`（默认本仓库）的 `HEAD` 解析结果。内容一律取自 `git archive <revision>`，所以打包的是被钉住的树，而不是工作区当前状态。
 - 产物写入 `--output`（默认 `dist/`，已被 .gitignore 排除）：
 
