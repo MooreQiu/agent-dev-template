@@ -81,7 +81,7 @@ REQUIRED='AGENTS.md CLAUDE.md INSTALL.md docs/HARNESSES.md scripts/agent.sh
 .github/PULL_REQUEST_TEMPLATE.md .github/workflows/claude.yml
 .github/workflows/agent-sweep.yml .github/workflows/pr-review.yml
 .github/workflows/review-watchdog.yml
-.github/workflows/project-sync.yml setup.sh'
+.github/workflows/project-sync.yml .github/workflows/ci.yml setup.sh'
 
 for f in $REQUIRED; do
   check "$f deployed to fixture" test -f "$FIX/$f"
@@ -135,6 +135,59 @@ check "squash merge allowed in repo settings" \
   sh -c 'grep -q -- "--allow-squash-merge" "$1"' sh "$GH_LOG"
 check "auto-merge enabled" \
   sh -c 'grep -q -- "--enable-auto-merge" "$1"' sh "$GH_LOG"
+
+# --- AC (issue #85): ITEMS, required contexts, bundle allowlist agree ------
+# setup.sh registers branch-protection required status checks; every context
+# must be reported by a workflow that deploy.sh's ITEMS actually installs
+# (ci.yml was missing, so "CI Gate / quality-gate" dangled and every PR stuck
+# at "Expected — waiting for status"), every ITEMS workflow must exist in the
+# template, and the bundle allowlist must cover each of them so bundled
+# installs can reproduce the same deployment.
+echo "== ITEMS / required-context / allowlist consistency =="
+SETUP_SH="$REPO_ROOT/setup.sh"
+ALLOWLIST="$REPO_ROOT/scripts/bundle-allowlist.txt"
+
+items_wfs=$(grep -o '\.github/workflows/[A-Za-z0-9._-]*\.yml' "$REPO_ROOT/deploy.sh" | sort -u)
+if [ -n "$items_wfs" ]; then
+  echo "PASS: deploy.sh ITEMS lists workflows"
+else
+  echo "FAIL: deploy.sh ITEMS lists workflows"
+  failures=$((failures + 1))
+fi
+
+# Required status checks registered by setup.sh, format "Workflow / job-id".
+contexts=$(sed -n 's/.*"contexts": \[\([^]]*\)\].*/\1/p' "$SETUP_SH" \
+  | tr ',' '\n' | sed 's/^[" ]*//;s/[" ]*$//' | grep -v '^$')
+if [ -n "$contexts" ]; then
+  echo "PASS: setup.sh registers required status checks"
+else
+  echo "FAIL: setup.sh registers required status checks"
+  failures=$((failures + 1))
+fi
+
+while IFS= read -r ctx; do
+  [ -n "$ctx" ] || continue
+  wf_name=${ctx%%/*}
+  wf_name=${wf_name% }
+  job_id=${ctx#*/}
+  job_id=${job_id# }
+  matched=""
+  for wf in $items_wfs; do
+    if grep -q "^name: *$wf_name\$" "$REPO_ROOT/$wf" 2>/dev/null \
+       && grep -q "^  $job_id:" "$REPO_ROOT/$wf" 2>/dev/null; then
+      matched="$wf"
+      break
+    fi
+  done
+  check "required context \"$ctx\" reported by installed workflow ($matched)" \
+    test -n "$matched"
+done <<< "$contexts"
+
+for wf in $items_wfs; do
+  check "ITEMS workflow exists in template ($wf)" test -f "$REPO_ROOT/$wf"
+  check "bundle allowlist covers ITEMS workflow ($wf)" \
+    sh -c 'grep -qx "$1" "$2" || grep -qx "${1%/*}" "$2"' sh "$wf" "$ALLOWLIST"
+done
 
 # --- AC4 + AC3: workflow merge method and branch references ---------------
 echo "== workflow merge and branch configuration =="
