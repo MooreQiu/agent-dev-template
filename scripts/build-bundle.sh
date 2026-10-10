@@ -146,10 +146,21 @@ $missing"
 )
 
 # --- version stamping -------------------------------------------------------
+# Stamp package.json and the shipped package-lock.json so the pair stays
+# consistent for an offline `npm ci` (issue #83). In the lockfile only the
+# two root occurrences are stamped: top-level version (2-space indent) and
+# packages[""].version (6-space indent); dependency entries keep their
+# pinned versions, which sit at deeper indentation in lockfileVersion 3.
 if [ -f "$BUNDLE/package.json" ]; then
   sed "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" \
     "$BUNDLE/package.json" > "$BUNDLE/package.json.tmp"
   mv "$BUNDLE/package.json.tmp" "$BUNDLE/package.json"
+fi
+if [ -f "$BUNDLE/package-lock.json" ]; then
+  sed -e "s/^  \"version\": \"[^\"]*\"/  \"version\": \"$VERSION\"/" \
+      -e "s/^      \"version\": \"[^\"]*\"/      \"version\": \"$VERSION\"/" \
+    "$BUNDLE/package-lock.json" > "$BUNDLE/package-lock.json.tmp"
+  mv "$BUNDLE/package-lock.json.tmp" "$BUNDLE/package-lock.json"
 fi
 
 # --- manifest -----------------------------------------------------------------
