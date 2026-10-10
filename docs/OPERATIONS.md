@@ -71,7 +71,10 @@
   显示副本——**机器人评论永远不授权合并**。
 - `VERDICT: APPROVE`：merge decider 在合并前对 artifact、gate 证据、
   head 未变化做最后复核，任何缺失/过期/不一致都会 fail-closed（不合并、
-  无副作用）；复核通过才 squash merge、删分支、自动关 issue。
+  无副作用）；复核通过才 squash merge、删分支、自动关 issue。关 issue
+  分两种路径：GitHub App 安装由 GitHub 依 `Closes` 等关键字自动关；纯
+  `GITHUB_TOKEN` 安装下关键字不生效，由 merge decider 在合并后显式关闭
+  PR 正文链接的 issue（best-effort，issue #84）。
 - `VERDICT: REQUEST_CHANGES`：PR 被打 `agent-failed`，issue 回队列，进入
   自动修复循环（见 [RUN_CONTROL.md](RUN_CONTROL.md#拒收-pr-的恢复)）。
 - **绿的 PR Review run ≠ approval**：它只证明审计跑完了；approval 只来自
