@@ -348,6 +348,34 @@ check "the watchdog mirror of the control paths follows suit" \
 check "the reviewer step is addressable for step outputs" \
   sh -c 'grep -Fq "id: review" "$1"' sh "$WF"
 
+# ========= issue #94: zero-exit sessions whose output lacks the verdict ======
+#
+# PR #86's audit (run 38021380044, attempt 2): the reviewer session exited 0
+# after posting a complete, substantively positive report as a PR comment, but
+# the mandatory VERDICT line was missing from BOTH the posted comment and the
+# captured session stdout. The issue #73 recovery only engages on a non-zero
+# exit, so the recorder took the unparsable stdout and failed the whole run
+# (exit 4). The zero-exit branch must therefore engage the SAME recovery
+# (same trust rules: allowlisted identity, in-window, single parser) whenever
+# the parser rejects the session output, before the recorder can fail -- and
+# keep failing closed with a precise alert when the window holds nothing
+# usable. Prose never becomes a verdict on any of these paths.
+
+echo "== issue #94: the zero-exit branch engages the same recovery first"
+
+check "the zero-exit branch probes the session output with the single verdict parser" \
+  sh -c 'grep -Fq "review-verdict.sh parse \"\$N\" --reviewer-output \"\$RUNNER_TEMP/reviewer-output.md\"" "$1"' sh "$WF"
+check "the zero-exit branch attempts comment recovery when the parser rejects the output" \
+  sh -c '[ "$(grep -cF "scripts/review-verdict-recover.sh \"\$N\"" "$1")" -ge 2 ]' sh "$WF"
+check "both recovery branches feed the recovered report to the recorder" \
+  sh -c '[ "$(grep -cF "echo \"recovered=true\" >> \"\$GITHUB_OUTPUT\"" "$1")" -ge 2 ]' sh "$WF"
+check "the zero-exit recovery announces the honored verdict on the PR" \
+  sh -c 'grep -Fq "其输出缺少可解析的 VERDICT 行" "$1"' sh "$WF"
+check "an unrecoverable zero-exit window fails closed with a precise alert" \
+  sh -c 'grep -Fq "都没有可解析的 VERDICT 行" "$1" && grep -B1 -A2 -F "都没有可解析的 VERDICT 行" "$1" | grep -Fq "exit 1"' sh "$WF"
+check "the reviewer prompt pins the final reply to the verdict-bearing report" \
+  sh -c 'grep -Fq "最终回复必须就是这份报告原文" "$1"' sh "$WF"
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
