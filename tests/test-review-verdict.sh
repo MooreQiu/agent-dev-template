@@ -62,7 +62,24 @@ for a in "$@"; do
   esac
 done
 case "$1 $2" in
-  "pr merge"|"pr edit"|"pr comment"|"pr review"|"repo view") exit 0 ;;
+  "pr merge")
+    # MOCK_MERGE_FAIL=1 simulates a rejected merge (issue #84: nothing may
+    # be closed when the merge itself failed).
+    [ "${MOCK_MERGE_FAIL:-0}" = 1 ] && exit 1
+    exit 0
+    ;;
+  "pr edit"|"pr comment"|"pr review"|"repo view") exit 0 ;;
+  # Issue #84: the decider reads the PR body to find the linked issues.
+  "pr view")
+    cat "${PR_BODY_FIXTURE:-/dev/null}"
+    exit 0
+    ;;
+  # Issue #84: explicit best-effort close; ISSUE_CLOSE_FAIL=1 simulates an
+  # already-closed issue or a non-issue target.
+  "issue close")
+    [ "${ISSUE_CLOSE_FAIL:-0}" = 1 ] && exit 1
+    exit 0
+    ;;
 esac
 echo "mock gh: unhandled arguments: $*" >&2
 exit 1
@@ -250,6 +267,10 @@ do_write() { # do_write <report> <head-sha> [evidence-dir|"-"] [extra args...]
 }
 
 do_decide() { # do_decide <mode> [pr-json|none|error] [artifact|none] [evidence|"-"] [in-actions: yes|no] [extra args...]
+  # MERGE_IDENTITY (global, "" = unset/legacy caller) is handed to the
+  # script as GH_AUTH_IDENTITY -- the marker scripts/app-auth.sh exports
+  # to tell the App installation token from the plain GITHUB_TOKEN
+  # (issue #84: only the GITHUB_TOKEN path closes linked issues itself).
   dm_mode="$1"
   shift
   pj="${1:-$TMP/pr-head-a.json}"
@@ -265,10 +286,12 @@ do_decide() { # do_decide <mode> [pr-json|none|error] [artifact|none] [evidence|
   if [ "$in_actions" = yes ]; then
     OUT=$(PR_JSON="$pj_file" CI_GATE_EVIDENCE="$ev" GITHUB_RUN_ID="$RUN_ID" \
       GITHUB_ACTIONS=true PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
+      GH_AUTH_IDENTITY="${MERGE_IDENTITY:-}" \
       bash "$SCRIPT" "$dm_mode" 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
   else
     OUT=$(PR_JSON="$pj_file" CI_GATE_EVIDENCE="$ev" GITHUB_RUN_ID="$RUN_ID" \
       env -u GITHUB_ACTIONS PATH="$MOCK_BIN:$PATH" GITHUB_REPOSITORY=acme/fixture \
+      GH_AUTH_IDENTITY="${MERGE_IDENTITY:-}" \
       bash "$SCRIPT" "$dm_mode" 42 --artifact "$art_arg" "$@" 2>"$TMP/err.txt")
   fi
   STATUS=$?
@@ -416,6 +439,119 @@ check "never consults PR comments for the verdict" \
 
 do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes --gate-target "$REPO_ROOT"
 check "forwards the reviewed tree to the gate check" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+
+# --- merge mode: explicit close of the linked issue (issue #84) ---------------
+#
+# GitHub honors the closing keywords in a merged PR's body only when the PR
+# was authored by a human or a GitHub App; under the plain actions
+# GITHUB_TOKEN the squash merge succeeds but the linked issue stays open
+# (found by the issue #52 smoke test). After an APPROVE-driven merge the
+# decider therefore closes the issues referenced by Closes/Fixes/Resolves
+# in the PR body itself -- except when the merge ran under the App
+# installation token (GH_AUTH_IDENTITY=app, exported by
+# scripts/app-auth.sh): GitHub already auto-closes there and a second close
+# would only add timeline noise. Closing is best-effort: it must never turn
+# a merged PR into a failure, and it must not run when the merge failed.
+
+echo "== merge: explicit close of linked issues (issue #84)"
+
+issue_closed() { grep -q "gh issue close $1 --repo acme/fixture" "$GH_LOG"; }
+
+cat > "$TMP/pr-body-linked.md" <<'EOF'
+Closes #84
+
+Also fixes #85, resolves #90 and Fixes: #91 (colon form). Mentions plain
+#99, the cross-repository MooreQiu/other#7, and repeats closes #84 for
+good measure.
+EOF
+export PR_BODY_FIXTURE="$TMP/pr-body-linked.md"
+
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=github-token
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+MERGE_IDENTITY=
+
+check "exit 0 when the linked issues are closed after the merge" \
+  sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "the merge itself still happens" sh -c 'grep -q "pr merge 42" "$1"' sh "$GH_LOG"
+check "closes the issue linked via Closes" issue_closed 84
+check "closes the issue linked via fixes" issue_closed 85
+check "closes the issue linked via resolves" issue_closed 90
+check "closes the colon form (Fixes: #n)" issue_closed 91
+check "does not close a plain issue mention" \
+  sh -c '! grep -q "gh issue close 99 " "$1"' sh "$GH_LOG"
+check "does not close a cross-repository reference" \
+  sh -c '! grep -q "gh issue close 7 " "$1"' sh "$GH_LOG"
+check "repeated keywords close the same issue exactly once" \
+  sh -c '[ "$(grep -c "gh issue close 84 " "$1")" -eq 1 ]' sh "$GH_LOG"
+
+# App installation token: GitHub auto-closes linked issues at merge time,
+# so the decider must not close anything itself.
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=app
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+MERGE_IDENTITY=
+
+check "exit 0 merging under the App identity" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "no explicit close under the App identity (GitHub auto-closes)" \
+  sh -c '! grep -q "gh issue close" "$1"' sh "$GH_LOG"
+
+# Unknown/legacy caller (marker unset): close anyway -- closing an
+# already-closed issue is harmless, leaving it open is not.
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+
+check "exit 0 with no identity marker (legacy caller)" \
+  sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "closes the linked issue even without the identity marker" issue_closed 84
+
+# Best-effort: a failing close must not fail the (already merged) PR.
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=github-token
+export ISSUE_CLOSE_FAIL=1
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+unset ISSUE_CLOSE_FAIL
+MERGE_IDENTITY=
+
+check "a failed close leaves the merge successful (exit 0)" \
+  sh -c '[ "$1" = 0 ]' sh "$STATUS"
+
+# Nothing may be closed when the merge itself failed.
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=github-token
+export MOCK_MERGE_FAIL=1
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+unset MOCK_MERGE_FAIL
+MERGE_IDENTITY=
+
+check "a failed merge exits non-zero" sh -c '[ "$1" != 0 ]' sh "$STATUS"
+check "a failed merge closes no issue" \
+  sh -c '! grep -q "gh issue close" "$1"' sh "$GH_LOG"
+
+# REQUEST_CHANGES requeues the PR; no issue may be closed on that path.
+do_write "$TMP/reject.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=github-token
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+MERGE_IDENTITY=
+
+check "REQUEST_CHANGES closes no issue" \
+  sh -c '! grep -q "gh issue close" "$1"' sh "$GH_LOG"
+
+# A body without closing keywords closes nothing.
+cat > "$TMP/pr-body-plain.md" <<'EOF'
+Ordinary body: touches #99 without keywords, no linking here.
+EOF
+export PR_BODY_FIXTURE="$TMP/pr-body-plain.md"
+do_write "$TMP/approve.md" "$HEAD_A" "$EV"
+MERGE_IDENTITY=github-token
+do_merge "$TMP/pr-head-a.json" "$ART" "$EV" yes
+MERGE_IDENTITY=
+
+check "exit 0 when the body links no issue" sh -c '[ "$1" = 0 ]' sh "$STATUS"
+check "a body without closing keywords closes nothing" \
+  sh -c '! grep -q "gh issue close" "$1"' sh "$GH_LOG"
+
+unset PR_BODY_FIXTURE
 
 # --- merge mode: misleading bot comments (AC3, AC6-misleading) ---------------
 
