@@ -20,7 +20,7 @@ scripts/build-bundle.sh --version 0.1.0 [--revision <完整commit SHA>] \
 | `agent-dev-template-<版本>.sha256` | tarball 的 SHA-256，格式兼容 `sha256sum -c` / `shasum -a 256 -c` |
 | `agent-dev-template-<版本>.release-notes.md` | 发布说明**输入**（骨架含版本/revision/校验和/安装指引；`--notes` 用指定文件替换正文） |
 
-`build-bundle.sh` 只构建、不发布：不调 `gh release`、不推送、不上传。发布属于后续独立流程。
+`build-bundle.sh` 只构建、不发布：不调 `gh release`、不推送、不上传。发布属于后续独立流程——发布资产、检查单与（需明确授权的）发布指令见 [RELEASE.md](RELEASE.md)。
 
 ## 包里有什么（allowlist）
 
