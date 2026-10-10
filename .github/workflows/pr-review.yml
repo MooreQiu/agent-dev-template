@@ -219,10 +219,11 @@ jobs:
       - name: Record verdict artifact
         if: steps.control.outputs.protected != 'true'
         run: |
-          # Issue #73: when the reviewer session died after posting its
-          # report, the recovered comment body replaces the (empty) session
-          # output as the distilled report; binding and enforcement below
-          # are unchanged.
+          # Issue #73 (a session that died after posting its report) and
+          # issue #94 (a zero-exit session whose stdout parses to nothing):
+          # when the review step flags a recovered report, the recovered
+          # comment body replaces the session output as the distilled
+          # report; binding and enforcement below are unchanged.
           REPORT="$RUNNER_TEMP/reviewer-output.md"
           if [ "${{ steps.review.outputs.recovered }}" = "true" ]; then
             REPORT="$RUNNER_TEMP/reviewer-verdict-recovered.md"
