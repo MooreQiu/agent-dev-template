@@ -78,6 +78,8 @@ Not covered (not implemented, no shortcut available):
 - Self-hosted runners: the workflows assume hosted runners.
 - An automated template upgrade or uninstaller -- see [Troubleshooting, upgrade, and removal](#troubleshooting-upgrade-and-removal) for the manual procedure.
 
+The release and support policy for v0.1 -- versioning, trial-release expectations, supported install paths, feedback and security-reporting entrypoints, and the release checklist -- is in [docs/RELEASE.md](docs/RELEASE.md).
+
 ## Get started
 
 ### Option A: new repository from this template
@@ -226,6 +228,7 @@ Switching providers changes only the two secrets (`ANTHROPIC_BASE_URL`, `ANTHROP
 | Model resolution | `scripts/model-config.sh` | Comment override > repo vars > fallback |
 | Harness switching | `scripts/agent.sh`, [docs/HARNESSES.md](docs/HARNESSES.md) | One source of truth in AGENTS.md; claude/codex/opencode/gemini |
 | Setup / deploy | `setup.sh`, `deploy.sh` | One-shot configuration / deployment into existing repos |
+| Release and support policy | `docs/RELEASE.md` | Versioning, supported scope, release checklist, publication runbook |
 | Local commands | `.claude/commands/` | `/claim` `/tdd` `/milestone-plan` `/queue` |
 | Spec Kit skills | `.claude/skills/`, `.codex/skills/` | specify -> plan -> tasks -> implement |
 | Docs | `docs/` | Deep dives linked throughout this file |

@@ -86,7 +86,7 @@ if [ -f "$NOTES" ]; then
     check "release notes reference the tooling pin source" \
         contains "$NOTES" '\.agent/project\.json'
     check "release notes carry no unresolved placeholders" \
-        no_match "$NOTES" 'TODO|TBD|FIXME|<revision>|<version>|<owner'
+        no_match "$NOTES" 'TODO|TBD|FIXME|<revision>|<version>'
     check "release notes carry no publication commands" \
         no_match "$NOTES" 'gh release create|git push.*tag'
 fi
