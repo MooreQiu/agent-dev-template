@@ -428,6 +428,10 @@ check "claim survives a hard kill (lease protection)" test -n "$(claim_sha kill9
 check "another worker cannot acquire the abandoned claim" \
   sh -c '! ( cd "$1/runner" && bash scripts/agent-claim.sh acquire 65 --owner scavenger >/dev/null 2>&1 )' \
   sh "$WORK/kill9"
+# SIGKILL cannot be trapped, so the victim's watchdog subshell survives the
+# hard kill; reap it (its budget sleep would otherwise linger for the full
+# lease holding inherited fds, issue #99).
+pkill -TERM -f "agent-task.sh run 65 -- sleep 60" 2>/dev/null || true
 
 # ===========================================================================
 # AC1: workflows share the single claim protocol
