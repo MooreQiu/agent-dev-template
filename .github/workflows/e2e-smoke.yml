@@ -1,0 +1,72 @@
+name: E2E Lifecycle Smoke
+
+# Real Actions smoke run for the autonomous lifecycle fixture (issue #48):
+# tests/test-e2e-lifecycle.sh wires the full orchestration chain inside a
+# disposable fixture repository (mocked gh boundary, deterministic harness),
+# saves redacted run ids, commit ids, verdict artifacts and requirement
+# evidence, and writes a final acceptance report. The report is uploaded so
+# unattended-lifecycle evidence is inspectable without shell access.
+#
+# Dispatchable on demand; also runs after changes to the orchestration
+# scripts or the fixture itself. The PR gate (CI Gate) already runs the same
+# suite via tests/run-all.sh; this workflow exists to exercise the fixture
+# standalone and to persist its acceptance report as a workflow artifact.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/spec-*.sh
+      - scripts/agent-*.sh
+      - scripts/pr-repair.sh
+      - scripts/review-verdict.sh
+      - scripts/ci-gate.sh
+      - tests/test-e2e-lifecycle.sh
+      - .github/workflows/e2e-smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-lifecycle-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_REPORT_DIR: ${{ github.workspace }}/e2e-report
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Single source of truth: the runtime pin comes from .agent/project.json
+      # so the provisioned node always matches the configured runtime --
+      # bumping the pin never leaves a stale literal behind.
+      - name: Resolve node pin from project config
+        id: node_pin
+        run: |
+          v="$(node -p "JSON.parse(require('fs').readFileSync('.agent/project.json','utf8')).runtime.version")"
+          case "$v" in
+            '' | *[!0-9]*) echo "::error::unparsable node pin in .agent/project.json: '$v'"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node_pin.outputs.version }}
+
+      - name: Autonomous lifecycle end-to-end fixture
+        run: |
+          bash tests/test-e2e-lifecycle.sh
+
+      - name: Upload acceptance report and evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-lifecycle-acceptance-report
+          path: ${{ github.workspace }}/e2e-report
+          if-no-files-found: error
