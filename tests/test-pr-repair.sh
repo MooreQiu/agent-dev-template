@@ -741,6 +741,36 @@ check "a failed repair dispatch fails the sweep job" \
 check "the sweep failure is announced as an error annotation" \
   sh -c 'grep -Fq "::error::" "$1" && grep -Fq "repair dispatch failed" "$1"' sh "$SWEEP"
 
+# ===========================================================================
+# issue #78: the scheduler's immediate-repair path must not swallow
+# dispatch failures either
+# ===========================================================================
+echo "== scheduler: immediate-repair failures are loud (issue #78)"
+
+# issue #75 made the sweep loud, but the scheduler's labeled-event repair
+# job kept the same `|| rc=$?` swallow: its case only echoed the failure,
+# so the job stayed green and nothing paged. The immediate path is a
+# rejected PR's first repair chance, so a failed dispatch must end that
+# job non-zero right after the failure is logged (the daily sweep still
+# retries as the fallback). The checks scope to the run body after the
+# dispatch line because the workflow already uses `exit 1` and
+# `::error::` for unrelated input validation.
+REPAIR_STEP="$WORK/sched-repair-step.sh"
+awk '
+  /^      - name: Repair rejected PR/ { step = 1; next }
+  step && /^        run: \|/ { inrun = 1; next }
+  inrun && NF && !/^          / { exit }
+  inrun { print substr($0, 11) }
+' "$SCHED" > "$REPAIR_STEP"
+DISPATCH_LINE="$(grep -n 'pr-repair.sh dispatch' "$REPAIR_STEP" | head -1 | cut -d: -f1)"
+check "the scheduler repair step dispatches before its failure handling" \
+  test -n "$DISPATCH_LINE"
+FAIL_TAIL="$(tail -n "+$DISPATCH_LINE" "$REPAIR_STEP")"
+check "a failed immediate repair dispatch fails the scheduler job" \
+  sh -c 'printf "%s" "$1" | grep -Fq "exit 1"' sh "$FAIL_TAIL"
+check "the immediate repair failure is announced as an error annotation" \
+  sh -c 'printf "%s" "$1" | grep -Fq "::error::repair dispatch failed"' sh "$FAIL_TAIL"
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures test(s) failed"
