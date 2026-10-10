@@ -73,13 +73,13 @@ cd agent-dev-template-<版本>
 务、无 webhook），删完即干净。
 
 1. **停用并删除 workflow**（`gh workflow disable` 或直接删文件）：
-   deploy 路线带来 5 个——`claude.yml`、`agent-sweep.yml`、
+   deploy 路线带来 6 个——`ci.yml`、`claude.yml`、`agent-sweep.yml`、
    `pr-review.yml`、`review-watchdog.yml`、`project-sync.yml`；从模板新建的仓库还有全部
-   `.github/workflows/`（ci.yml、agent-scheduler.yml、spec-*.yml 等）。
-2. **删除体系文件**：deploy 路线是 ITEMS 清单里的 19 项（`AGENTS.md`、
+   `.github/workflows/`（agent-scheduler.yml、spec-*.yml 等）。
+2. **删除体系文件**：deploy 路线是 ITEMS 清单里的 20 项（`AGENTS.md`、
    `CLAUDE.md`、`INSTALL.md`、`.agent/`、`docs/`、`scripts/`、`.specify/`、
    `.claude/commands/`、`.claude/skills/`、`.github/ISSUE_TEMPLATE/`、
-   `.github/PULL_REQUEST_TEMPLATE.md`、上述 5 个 workflow、`package.json`、
+   `.github/PULL_REQUEST_TEMPLATE.md`、上述 6 个 workflow、`package.json`、
    `package-lock.json`、`setup.sh`）；
    模板路线另加 `.codex/`。
 3. **删除 labels**：

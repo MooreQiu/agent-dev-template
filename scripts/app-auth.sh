@@ -8,8 +8,15 @@
 #
 # Behavior:
 #   - App configured            -> mint installation token, export GH_TOKEN
+#                                  and GH_AUTH_IDENTITY=app
 #   - App missing + GITHUB_TOKEN-> fall back to GITHUB_TOKEN with a warning
+#                                  and GH_AUTH_IDENTITY=github-token
 #   - neither                    -> fail with an actionable message
+#
+# GH_AUTH_IDENTITY (issue #84) lets consumers tell the two token kinds
+# apart -- e.g. the review-verdict merge decider only closes linked issues
+# itself under the plain GITHUB_TOKEN, because GitHub already auto-closes
+# them for merges performed as an App.
 #
 # Env (workflow secrets or local shell):
 #   APP_ID / GITHUB_APP_ID          GitHub App ID
@@ -18,7 +25,8 @@
 #   APP_INSTALLATION_ID             optional; auto-discovered when unset
 #   GITHUB_REPOSITORY               owner/repo (installation discovery)
 #   GITHUB_TOKEN                    fallback token
-#   GITHUB_ENV                      Actions env file; GH_TOKEN is appended to it
+#   GITHUB_ENV                      Actions env file; GH_TOKEN and
+#                                   GH_AUTH_IDENTITY are appended to it
 #   GH_API_URL                      API base, default https://api.github.com
 #
 # The token value is never written to stdout/stderr or to disk. On Actions
@@ -71,10 +79,12 @@ app_api() { # <method> <path> <jwt> -> response body on stdout
     "${GH_API_URL:-https://api.github.com}$2"
 }
 
-app_apply() { # <token>
+app_apply() { # <token> <identity: app|github-token>
   export GH_TOKEN="$1"
+  export GH_AUTH_IDENTITY="$2"
   if [ -n "${GITHUB_ENV:-}" ]; then
     printf 'GH_TOKEN=%s\n' "$1" >>"$GITHUB_ENV"
+    printf 'GH_AUTH_IDENTITY=%s\n' "$2" >>"$GITHUB_ENV"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
       printf '::add-mask::%s\n' "$1"
     fi
@@ -90,7 +100,7 @@ app_auth_main() {
   if [ -z "$app_id" ] || [ -z "$app_key" ]; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       echo "app-auth: GitHub App not configured (need APP_ID and APP_PRIVATE_KEY); falling back to GITHUB_TOKEN. Automated PRs may require manual approval until the App is set up. See docs/GITHUB_APP_SETUP.md" >&2
-      app_apply "$GITHUB_TOKEN"
+      app_apply "$GITHUB_TOKEN" github-token
       return 0
     fi
     echo "app-auth: no authentication available. Create a GitHub App and set the APP_ID and APP_PRIVATE_KEY secrets (see docs/GITHUB_APP_SETUP.md), or provide GITHUB_TOKEN." >&2
@@ -138,7 +148,7 @@ app_auth_main() {
   }
   expires=$(app_json_get "$token_resp" '.expires_at') || expires="unknown"
 
-  app_apply "$token"
+  app_apply "$token" app
   echo "app-auth: using GitHub App installation token (expires $expires)" >&2
 }
 
